@@ -1,0 +1,289 @@
+:root {
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --text: #1d2733;
+  --muted: #667085;
+  --line: #d8dee8;
+  --accent: #0f766e;
+  --accent-dark: #115e59;
+  --danger: #b42318;
+  --warning: #b54708;
+  --ok: #047857;
+  --low: #475467;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  background: #17202b;
+  color: #fff;
+  border-bottom: 4px solid var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.app-header p {
+  margin: 5px 0 0;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.icon-button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+main {
+  width: min(1400px, 100%);
+  margin: 0 auto;
+  padding: 18px 20px 32px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.metric {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  min-width: 92px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  padding: 12px 10px 10px;
+  color: var(--muted);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: 160px 160px minmax(220px, 1fr);
+  gap: 12px;
+  margin: 16px 0;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+select,
+input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+}
+
+.view-root {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 13px;
+}
+
+th {
+  background: #eef3f7;
+  color: #344054;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 34px;
+  height: 24px;
+  border-radius: 5px;
+  padding: 0 8px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.risk-高 {
+  background: #fee4e2;
+  color: var(--danger);
+}
+
+.risk-中 {
+  background: #fef0c7;
+  color: var(--warning);
+}
+
+.risk-低 {
+  background: #e4e7ec;
+  color: var(--low);
+}
+
+.defect-少锡 {
+  color: #175cd3;
+  font-weight: 700;
+}
+
+.defect-多锡 {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.details {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 14px;
+  padding: 14px;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.rank-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rank-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #edf1f5;
+  padding-bottom: 8px;
+}
+
+.empty {
+  padding: 28px;
+  color: var(--muted);
+  text-align: center;
+}
+
+@media (max-width: 860px) {
+  .app-header {
+    align-items: flex-start;
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 18px;
+  }
+
+  main {
+    padding: 14px;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .cards-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>锡膏印刷多锡/少锡质量管理 Agent</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>锡膏印刷多锡/少锡质量管理 Agent</h1>
+      <p id="dataStatus">加载数据中...</p>
+    </div>
+    <div class="header-actions">
+      <button id="refreshButton" class="icon-button" title="刷新数据" aria-label="刷新数据">↻</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="metrics" id="metrics"></section>
+
+    <nav class="tabs" aria-label="主视图">
+      <button class="tab active" data-view="abnormal">实时异常</button>
+      <button class="tab" data-view="cases">质量案例</button>
+      <button class="tab" data-view="dashboard">统计看板</button>
+    </nav>
+
+    <section class="toolbar">
+      <label>
+        异常类型
+        <select id="defectFilter">
+          <option value="">全部</option>
+          <option value="少锡">少锡</option>
+          <option value="多锡">多锡</option>
+        </select>
+      </label>
+      <label>
+        风险
+        <select id="riskFilter">
+          <option value="">全部</option>
+          <option value="高">高</option>
+          <option value="中">中</option>
+          <option value="低">低</option>
+        </select>
+      </label>
+      <label>
+        搜索
+        <input id="searchInput" type="search" placeholder="工单 / PCB / 元件 / Pad">
+      </label>
+    </section>
+
+    <section id="viewRoot" class="view-root"></section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
