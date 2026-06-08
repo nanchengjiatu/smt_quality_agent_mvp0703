@@ -12,6 +12,7 @@ class Defect:
     upper_limit: float | None
     lower_limit: float | None
     limit_value: float | None
+    deviation_percent: float | None = None
 
 
 @dataclass
@@ -120,6 +121,7 @@ def run_agent(
     spi_rows: list[dict[str, Any]],
     total_pad_count_by_board: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
+    enable_board_trend = total_pad_count_by_board is not None
     total_pad_count_by_board = total_pad_count_by_board or infer_total_pad_counts(spi_rows)
     abnormals = build_abnormals(spi_rows)
 
@@ -128,6 +130,7 @@ def run_agent(
             abnormal,
             abnormals,
             total_pad_count_by_board,
+            enable_board_trend,
         )
         causes_and_actions = recommend_causes(abnormal.defect_type, pattern, risk_level)
 
@@ -205,6 +208,10 @@ def build_abnormals(spi_rows: list[dict[str, Any]]) -> list[Abnormal]:
 
 
 def judge_defect(row: dict[str, Any]) -> Defect | None:
+    raw_defect = judge_raw_ng_type(row)
+    if raw_defect is not None:
+        return raw_defect
+
     for metric in ("volume", "area", "height"):
         value = as_float(row.get(metric))
         upper = as_float(row.get(f"{metric}_upper"))
@@ -219,6 +226,37 @@ def judge_defect(row: dict[str, Any]) -> Defect | None:
             return Defect(f"{metric_defect_prefix(metric)}少锡", metric, value, upper, lower, lower)
 
     return None
+
+
+def judge_raw_ng_type(row: dict[str, Any]) -> Defect | None:
+    raw_ng_type = str(row.get("raw_ng_type") or row.get("comp_errname") or "").strip()
+    if not raw_ng_type:
+        return None
+
+    normalized = raw_ng_type.lower().replace("_", " ")
+    defect_map = {
+        "under volume": ("少锡", "volume", "volume_deviation_percent"),
+        "under area": ("少锡", "area", "area_deviation_percent"),
+        "under height": ("少锡", "height", "height_deviation_percent"),
+        "over volume": ("多锡", "volume", "volume_deviation_percent"),
+        "over area": ("多锡", "area", "area_deviation_percent"),
+        "areaover": ("多锡", "area", "area_deviation_percent"),
+        "over height": ("多锡", "height", "height_deviation_percent"),
+    }
+    mapped = defect_map.get(normalized)
+    if mapped is None:
+        return None
+
+    defect_type, metric, deviation_field = mapped
+    return Defect(
+        defect_type=defect_type,
+        main_metric=metric,
+        actual_value=as_float(row.get(metric)),
+        upper_limit=as_float(row.get(f"{metric}_upper")),
+        lower_limit=as_float(row.get(f"{metric}_lower")),
+        limit_value=None,
+        deviation_percent=as_float(row.get(deviation_field)),
+    )
 
 
 def metric_defect_prefix(metric: str) -> str:
@@ -241,7 +279,9 @@ def build_abnormal(row: dict[str, Any], defect: Defect, abnormal_no: int) -> Abn
         actual_value=defect.actual_value,
         upper_limit=defect.upper_limit,
         lower_limit=defect.lower_limit,
-        deviation_percent=calc_deviation_percent(defect.actual_value, defect.upper_limit, defect.lower_limit),
+        deviation_percent=defect.deviation_percent
+        if defect.deviation_percent is not None
+        else calc_deviation_percent(defect.actual_value, defect.upper_limit, defect.lower_limit),
     )
 
 
@@ -264,6 +304,7 @@ def classify_pattern(
     current: Abnormal,
     all_abnormals: list[Abnormal],
     total_pad_count_by_board: dict[str, int],
+    enable_board_trend: bool,
 ) -> tuple[str, str]:
     current.board_abnormal_ratio = get_board_abnormal_ratio(
         current.board_sn,
@@ -276,11 +317,12 @@ def classify_pattern(
     if repeat_count >= 3:
         return "连续3板同点异常", "高"
 
-    board_ratio = current.board_abnormal_ratio
-    if board_ratio >= 0.10:
-        return "整板趋势异常", "高"
-    if board_ratio >= 0.05:
-        return "整板趋势异常", "中"
+    if enable_board_trend:
+        board_ratio = current.board_abnormal_ratio
+        if board_ratio >= 0.10:
+            return "整板趋势异常", "高"
+        if board_ratio >= 0.05:
+            return "整板趋势异常", "中"
 
     affected_pad_count = count_same_component_pads(current, all_abnormals)
     current.affected_pad_count = affected_pad_count

@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from smt_quality_agent.dashboard import build_dashboard_summary, build_dashboard_top
+from smt_quality_agent.affected_model import normalize_affected_model_row
 from smt_quality_agent.rules_engine import build_quality_cases, run_agent
 
 
@@ -50,6 +51,29 @@ class RulesEngineTest(unittest.TestCase):
         top = build_dashboard_top(abnormals, cases)
         self.assertEqual(top["top_components"][0]["component"], "R125")
         self.assertEqual(top["top_patterns"][0]["abnormal_pattern"], "整板趋势异常")
+
+    def test_affected_model_row_mapping(self) -> None:
+        row = normalize_affected_model_row({
+            "fdate": "2023-11-29 04:28:00",
+            "machinename": "GKG-PC",
+            "cmodel": "C1027835AB13",
+            "barcode": "FOC274807UP",
+            "compname": "ISO_3V3_R9_1",
+            "comp_errname": "Under Height",
+            "comp_avdp": 12.85,
+            "comp_aadp": 6.84,
+            "comp_ahdp": 10.77,
+            "comp_px": -1,
+            "comp_py": 35.3,
+        })
+
+        abnormals = run_agent([row])
+
+        self.assertEqual(row["component"], "ISO_3V3_R9")
+        self.assertEqual(row["pad"], "1")
+        self.assertEqual(abnormals[0]["defect_type"], "少锡")
+        self.assertEqual(abnormals[0]["main_metric"], "height")
+        self.assertEqual(abnormals[0]["deviation_percent"], 10.77)
 
 
 if __name__ == "__main__":

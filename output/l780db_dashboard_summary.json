@@ -1,0 +1,12 @@
+{
+  "abnormal_count": 4175,
+  "more_solder_count": 1733,
+  "less_solder_count": 2442,
+  "high_risk_count": 480,
+  "medium_risk_count": 1038,
+  "low_risk_count": 2657,
+  "open_case_count": 587,
+  "case_count": 587,
+  "recheck_effective_rate": null,
+  "recurrence_count": 0
+}
