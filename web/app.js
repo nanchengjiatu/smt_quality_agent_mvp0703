@@ -3,6 +3,7 @@ const DATA_PATHS = {
   cases: "../output/quality_cases.json",
   summary: "../output/dashboard_summary.json",
   top: "../output/dashboard_top.json",
+  analysis: "../output/param_analysis.json",
 };
 
 const state = {
@@ -11,6 +12,7 @@ const state = {
   cases: [],
   summary: {},
   top: {},
+  analysis: null,
 };
 
 const viewRoot = document.getElementById("viewRoot");
@@ -37,21 +39,23 @@ document.querySelectorAll(".tab").forEach((button) => {
 async function loadData() {
   dataStatus.textContent = "加载数据中...";
   try {
-    const [abnormals, cases, summary, top] = await Promise.all([
+    const [abnormals, cases, summary, top, analysis] = await Promise.all([
       fetchJson(DATA_PATHS.abnormals),
       fetchJson(DATA_PATHS.cases),
       fetchJson(DATA_PATHS.summary),
       fetchJson(DATA_PATHS.top),
+      fetchJson(DATA_PATHS.analysis).catch(() => null),
     ]);
 
     state.abnormals = abnormals;
     state.cases = cases;
     state.summary = summary;
     state.top = top;
+    state.analysis = analysis;
     dataStatus.textContent = `已加载 ${abnormals.length} 条异常，${cases.length} 个质量案例`;
     render();
   } catch (error) {
-    dataStatus.textContent = "数据加载失败，请先运行 python3 run_demo.py";
+    dataStatus.textContent = "数据加载失败，请先运行 python3 run_over_volume_demo.py";
     viewRoot.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -70,6 +74,8 @@ function render() {
     renderAbnormalView();
   } else if (state.activeView === "cases") {
     renderCaseView();
+  } else if (state.activeView === "events") {
+    renderEventsView();
   } else {
     renderDashboardView();
   }
@@ -203,6 +209,94 @@ function renderDashboardView() {
   `;
 }
 
+function renderEventsView() {
+  const analysis = state.analysis;
+  if (!analysis) {
+    viewRoot.innerHTML = `<div class="empty">暂无事件分析数据，请先运行 python3 run_param_analysis_demo.py</div>`;
+    return;
+  }
+
+  const overview = analysis.data_overview || {};
+  const overviewItems = [
+    ["检测记录", overview.record_count ?? "-"],
+    ["生产板数", overview.board_count ?? "-"],
+    ["焊点不良率", overview.defect_rate_percent != null ? `${overview.defect_rate_percent}%` : "-"],
+    ["板级直通率", overview.board_pass_rate_percent != null ? `${overview.board_pass_rate_percent}%` : "-"],
+    ["复测有效率", formatRate(overview.recheck_effective_rate)],
+    ["数据时间", (overview.time_range || []).filter(Boolean).join(" ~ ") || "-"],
+  ];
+
+  const events = analysis.events || [];
+  viewRoot.innerHTML = `
+    <div class="event-view">
+      <section class="panel">
+        <h2>全量数据概览 <span class="details">${escapeHtml(analysis.source_table || "")}</span></h2>
+        <div class="overview-grid">
+          ${overviewItems.map(([label, value]) => `
+            <div class="overview-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
+          `).join("")}
+        </div>
+      </section>
+      ${events.length
+        ? events.map(renderEventCard).join("")
+        : `<div class="empty">数据时间范围内未检出聚集事件</div>`}
+      ${(analysis.caveats || []).length
+        ? `<p class="details caveats">说明：${analysis.caveats.map(escapeHtml).join(" ")}</p>`
+        : ""}
+    </div>
+  `;
+}
+
+function renderEventCard(event) {
+  const boards = (event.boards || []).map((board) => `
+    <tr>
+      <td>${escapeHtml(board.time)}</td>
+      <td>${escapeHtml(board.board_sn)}</td>
+      <td>${escapeHtml(board.ng_count)}</td>
+      <td>${board.ng_share != null ? `${(board.ng_share * 100).toFixed(0)}%` : "-"}</td>
+      <td>${formatNumber(board.metric_avg)}%</td>
+    </tr>
+  `).join("");
+
+  const causes = (event.suggested_causes || []).map((cause, index) => `
+    <li><strong>${escapeHtml(cause)}</strong><span class="details"> — ${escapeHtml((event.suggested_actions || [])[index] || "")}</span></li>
+  `).join("");
+
+  return `
+    <section class="panel event-card">
+      <h2>
+        ${escapeHtml(event.event_id)}
+        <span class="${defectClass(event.main_defect_cn)}">${escapeHtml(event.main_defect_cn)}</span>
+        <span class="badge risk-高">${escapeHtml(event.scope)}</span>
+      </h2>
+      <p class="details">
+        ${escapeHtml(event.model)} · ${escapeHtml(event.machine)} ·
+        ${escapeHtml(event.start_time)} ~ ${escapeHtml(event.end_time)}（${escapeHtml(event.duration_minutes)} 分钟）·
+        ${escapeHtml(event.board_count)} 块板 / ${escapeHtml(event.ng_record_count)} 条 NG ·
+        前兆判定：${escapeHtml((event.precursor || {}).verdict || "-")}
+      </p>
+      <div class="event-body">
+        <div>
+          <h3>分析结论</h3>
+          <ul class="finding-list">
+            ${(event.findings || []).map((finding) => `<li>${escapeHtml(finding)}</li>`).join("")}
+          </ul>
+          <h3>疑似原因与建议</h3>
+          <ul class="finding-list">${causes}</ul>
+        </div>
+        <div class="table-wrap">
+          <table class="event-board-table">
+            <thead>
+              <tr><th>时间</th><th>PCB</th><th>NG 点数</th><th>NG 占比</th><th>平均${escapeHtml(event.metric_label)}</th></tr>
+            </thead>
+            <tbody>${boards}</tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderRankPanel(title, rows, labelFn, valueFn) {
   return `
     <section class="panel">
@@ -242,10 +336,10 @@ function filterItems(items) {
 }
 
 function defectClass(defectType) {
-  if (String(defectType).endsWith("少锡")) {
+  if (String(defectType).includes("少锡")) {
     return "defect-少锡";
   }
-  if (String(defectType).endsWith("多锡")) {
+  if (String(defectType).includes("多锡")) {
     return "defect-多锡";
   }
   return "";

@@ -2,59 +2,19 @@
   {
     "case_id": "CASE000000000001",
     "abnormal_ids": [
-      "ABN000000000001",
-      "ABN000000000002",
       "ABN000000000003"
     ],
-    "created_at": "2026-06-02 09:02:01",
-    "work_order": "WO001",
-    "product_name": "A产品",
-    "board_sn": "PCB003",
-    "machine": "SPI-01",
-    "component": "R125",
+    "created_at": "2024-01-09T03:12:00",
+    "work_order": "C1024412AB13",
+    "product_name": "C1024412AB13",
+    "board_sn": "FOC28014124",
+    "machine": "GKG-PC",
+    "component": "C8",
     "pad": "1",
-    "defect_type": "少锡",
-    "abnormal_pattern": "连续3板同点异常",
-    "risk_level": "高",
-    "evidence_summary": "R125 Pad1 在 PCB001、PCB002、PCB003 连续出现少锡，主指标为 volume。",
-    "root_cause_guess": [
-      "钢网堵孔",
-      "锡膏变干",
-      "局部支撑不良"
-    ],
-    "suggested_action": [
-      "立即清洗钢网，并检查对应 Pad 开口是否堵塞",
-      "检查锡膏回温、搅拌、使用时间和黏度状态",
-      "检查该区域 PCB 支撑和平整度"
-    ],
-    "actual_cause": null,
-    "actual_action": null,
-    "owner": null,
-    "status": "待处理",
-    "recheck_result": "未复测",
-    "effective": null,
-    "closed_at": null,
-    "first_inspect_time": "2026-06-02 09:00:01",
-    "latest_inspect_time": "2026-06-02 09:02:01",
-    "abnormal_count": 3
-  },
-  {
-    "case_id": "CASE000000000002",
-    "abnormal_ids": [
-      "ABN000000000004",
-      "ABN000000000005"
-    ],
-    "created_at": "2026-06-02 09:02:03",
-    "work_order": "WO001",
-    "product_name": "A产品",
-    "board_sn": "PCB003",
-    "machine": "SPI-01",
-    "component": "C210",
-    "pad": "多Pad",
     "defect_type": "多锡",
     "abnormal_pattern": "同一元件多Pad异常",
     "risk_level": "中",
-    "evidence_summary": "PCB003 的 C210 多个 Pad 同时出现多锡，涉及 Pad：1、2。",
+    "evidence_summary": "FOC28014124 的 C8 多个 Pad 同时出现多锡，涉及 Pad：1。",
     "root_cause_guess": [
       "钢网底部污染",
       "局部塌边",
@@ -72,41 +32,39 @@
     "recheck_result": "未复测",
     "effective": null,
     "closed_at": null,
-    "first_inspect_time": "2026-06-02 09:02:02",
-    "latest_inspect_time": "2026-06-02 09:02:03",
-    "abnormal_count": 2
+    "first_inspect_time": "2024-01-09T03:12:00",
+    "latest_inspect_time": "2024-01-09T03:12:00",
+    "abnormal_count": 1
   },
   {
-    "case_id": "CASE000000000003",
+    "case_id": "CASE000000000002",
     "abnormal_ids": [
+      "ABN000000000004",
       "ABN000000000007",
-      "ABN000000000008",
       "ABN000000000009",
       "ABN000000000010",
-      "ABN000000000011"
+      "ABN000000000012"
     ],
-    "created_at": "2026-06-02 09:04:05",
-    "work_order": "WO001",
-    "product_name": "A产品",
-    "board_sn": "PCB005",
-    "machine": "SPI-01",
-    "component": "多元件",
-    "pad": "1",
-    "defect_type": "少锡",
-    "abnormal_pattern": "整板趋势异常",
-    "risk_level": "中",
-    "evidence_summary": "PCB005 出现整板少锡趋势，异常点数 5，异常占比约 6.25%。",
+    "created_at": "2024-01-09T03:26:00",
+    "work_order": "C1024412AB13",
+    "product_name": "C1024412AB13",
+    "board_sn": "FOC2801413F",
+    "machine": "GKG-PC",
+    "component": "C8",
+    "pad": "2",
+    "defect_type": "多锡",
+    "abnormal_pattern": "连续3板同点异常",
+    "risk_level": "高",
+    "evidence_summary": "C8 Pad2 在 FOC28014124、FOC2801413A、FOC28014136、FOC28014133、FOC2801413F 连续出现多锡，主指标为 volume。",
     "root_cause_guess": [
-      "刮刀压力过大",
-      "印刷速度过快",
-      "锡膏状态异常",
-      "钢网清洗不足"
+      "钢网底部残锡",
+      "钢网开口异常",
+      "脱模异常"
     ],
     "suggested_action": [
-      "检查并适当降低刮刀压力",
-      "检查并适当降低印刷速度",
-      "检查锡膏回温、搅拌、使用时间和环境条件",
-      "检查钢网清洗频率，必要时立即清洗"
+      "清洗钢网底部，并复测下一块板",
+      "检查对应 Pad 钢网开口尺寸和状态",
+      "检查脱模速度、脱模距离和 PCB 支撑"
     ],
     "actual_cause": null,
     "actual_action": null,
@@ -115,8 +73,85 @@
     "recheck_result": "未复测",
     "effective": null,
     "closed_at": null,
-    "first_inspect_time": "2026-06-02 09:04:01",
-    "latest_inspect_time": "2026-06-02 09:04:05",
+    "first_inspect_time": "2024-01-09T03:12:00",
+    "latest_inspect_time": "2024-01-09T03:26:00",
     "abnormal_count": 5
+  },
+  {
+    "case_id": "CASE000000000003",
+    "abnormal_ids": [
+      "ABN000000000005"
+    ],
+    "created_at": "2024-01-09T03:12:00",
+    "work_order": "C1024412AB13",
+    "product_name": "C1024412AB13",
+    "board_sn": "FOC28014124",
+    "machine": "GKG-PC",
+    "component": "C9",
+    "pad": "1",
+    "defect_type": "多锡",
+    "abnormal_pattern": "同一元件多Pad异常",
+    "risk_level": "中",
+    "evidence_summary": "FOC28014124 的 C9 多个 Pad 同时出现多锡，涉及 Pad：1。",
+    "root_cause_guess": [
+      "钢网底部污染",
+      "局部塌边",
+      "脱模异常"
+    ],
+    "suggested_action": [
+      "清洗该元件区域钢网底部",
+      "检查锡膏状态、脱模条件和支撑状态",
+      "检查脱模参数和 PCB 支撑"
+    ],
+    "actual_cause": null,
+    "actual_action": null,
+    "owner": null,
+    "status": "待处理",
+    "recheck_result": "未复测",
+    "effective": null,
+    "closed_at": null,
+    "first_inspect_time": "2024-01-09T03:12:00",
+    "latest_inspect_time": "2024-01-09T03:12:00",
+    "abnormal_count": 1
+  },
+  {
+    "case_id": "CASE000000000004",
+    "abnormal_ids": [
+      "ABN000000000006",
+      "ABN000000000008",
+      "ABN000000000011",
+      "ABN000000000013"
+    ],
+    "created_at": "2024-01-09T03:26:00",
+    "work_order": "C1024412AB13",
+    "product_name": "C1024412AB13",
+    "board_sn": "FOC2801413F",
+    "machine": "GKG-PC",
+    "component": "C9",
+    "pad": "2",
+    "defect_type": "多锡",
+    "abnormal_pattern": "连续3板同点异常",
+    "risk_level": "高",
+    "evidence_summary": "C9 Pad2 在 FOC28014124、FOC2801413A、FOC28014133、FOC2801413F 连续出现多锡，主指标为 volume。",
+    "root_cause_guess": [
+      "钢网底部残锡",
+      "钢网开口异常",
+      "脱模异常"
+    ],
+    "suggested_action": [
+      "清洗钢网底部，并复测下一块板",
+      "检查对应 Pad 钢网开口尺寸和状态",
+      "检查脱模速度、脱模距离和 PCB 支撑"
+    ],
+    "actual_cause": null,
+    "actual_action": null,
+    "owner": null,
+    "status": "待处理",
+    "recheck_result": "未复测",
+    "effective": null,
+    "closed_at": null,
+    "first_inspect_time": "2024-01-09T03:12:00",
+    "latest_inspect_time": "2024-01-09T03:26:00",
+    "abnormal_count": 4
   }
 ]

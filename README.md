@@ -18,35 +18,97 @@ more-solder and less-solder defects.
 ## Files
 
 - `sql/schema.sql`: PostgreSQL table definitions and initial knowledge rules.
+- `sql/over_volume.sql`: real `l780db.public.over_volume` table definition.
 - `data/sample_spi_data.csv`: sample SPI data for rule verification.
 - `smt_quality_agent/rules_engine.py`: core rule engine.
+- `smt_quality_agent/over_volume.py`: adapter for `l780db.public.over_volume`.
 - `smt_quality_agent/affected_model.py`: adapter for `l780db.public.affected_model_0601`.
 - `smt_quality_agent/dashboard.py`: dashboard summary and TOP ranking logic.
-- `run_demo.py`: runs the sample data through the rule engine.
+- `smt_quality_agent/param_correlation.py`: full-data event clustering,
+  precursor drift detection, parameter exclusion, and recheck analysis.
+- `run_param_analysis_demo.py`: reads `l780db.public.full_excel0608` and
+  writes `output/param_analysis.json` for the 事件与根因分析 view.
+- `run_over_volume_demo.py`: main entry, reads `l780db.public.over_volume` with `psql`.
+- `run_demo.py`: runs the sample CSV data through the rule engine.
 - `run_l780db_demo.py`: reads PostgreSQL `l780db.public.affected_model_0601` with `psql`.
+- `scripts/import_xlsx_to_l780db.py`: streams SPI XLSX exports into PostgreSQL.
 - `web/`: static MVP page for realtime abnormalities, quality cases, and dashboard.
 
-## Run
+## Run (over_volume, primary)
+
+The primary data source is the PostgreSQL table `l780db.public.over_volume`,
+which uses the real SPI export structure (printing parameters as
+`<name>_plan` / `<name>` / `diff_<name>` columns plus `Comp_*` defect fields).
 
 ```bash
-cd /home/xianghappyman/smt_quality_agent_mvp
-python3 run_demo.py
+cd /home/xianghappyman/smt_quality_agent_mvp0608
+python3 run_over_volume_demo.py
 ```
 
-The demo prints abnormal records and quality-case candidates as JSON.
-It also writes these frontend/API-ready files:
+The demo prints the dashboard summary and writes these frontend/API-ready
+files consumed by `web/`:
 
 - `output/abnormal_results.json`
 - `output/quality_cases.json`
 - `output/dashboard_summary.json`
 - `output/dashboard_top.json`
 
+Field mapping (same convention as `affected_model_0601`):
+
+- `fdate` -> `inspect_time`
+- `machinename` -> `machine`
+- `cmodel` -> `work_order` and `product_name`
+- `barcode` -> `board_sn`
+- `compname` -> `component` and `pad` when the name ends with `_数字`
+- `comp_errname` -> defect type (`Over Volume` -> `多锡`, ...)
+- `comp_avdp` / `comp_aadp` / `comp_ahdp` -> volume/area/height deviation
+- printing parameter triples (`printspeed`, `frontsqgpress`, `rearsqgpress`,
+  `printgap`, `snapoffdistance`, `snapoffspeed`, `snapoffdelay`,
+  `cleaningfrequency`, ...) plus `temperature` / `humidity` are carried along
+  for later cause correlation.
+
+Note: `over_volume` contains abnormal rows only, so board-level trend rules
+stay disabled on this path.
+
+## Run (full-data event & root-cause analysis)
+
+`l780db.public.full_excel0608` holds the complete SPI export (PASS rows
+included), which enables analyses the NG-only tables cannot support:
+
+```bash
+python3 run_param_analysis_demo.py
+```
+
+This writes `output/param_analysis.json`, rendered by the 事件与根因分析 tab:
+
+- data overview: defect rate, board first-pass rate, recheck effective rate;
+- event clustering: NG boards of the same model within 30 minutes form one
+  event, with board-wide vs local-pad scope classification;
+- precursor drift: deviation trend of normal boards before each event
+  (sudden vs gradual verdict);
+- parameter exclusion: per-event check whether any `abs_<param>` deviation
+  exceeded normal production levels (same-model baseline preferred);
+- recheck tracking: re-inspections of the same barcode are detected and the
+  rework outcome is reported per event.
+
+Dates in `fdate` are stored as text (`2024/1/9 3:12`); the module parses them
+before sorting, so do not rely on SQL `order by fdate` for this table.
+
+## Run (sample CSV)
+
+```bash
+python3 run_demo.py
+```
+
+This writes `output/sample_*.json` variants so it does not overwrite the
+`over_volume` results.
+
 ## View The Page
 
 Generate the JSON files first:
 
 ```bash
-python3 run_demo.py
+python3 run_over_volume_demo.py
 ```
 
 Then start a local static server:

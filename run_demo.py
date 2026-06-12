@@ -43,10 +43,10 @@ def main() -> None:
     print(json.dumps(dashboard_top, ensure_ascii=False, indent=2))
 
     OUTPUT_DIR.mkdir(exist_ok=True)
-    write_json(OUTPUT_DIR / "abnormal_results.json", results)
-    write_json(OUTPUT_DIR / "quality_cases.json", quality_cases)
-    write_json(OUTPUT_DIR / "dashboard_summary.json", dashboard_summary)
-    write_json(OUTPUT_DIR / "dashboard_top.json", dashboard_top)
+    write_json(OUTPUT_DIR / "sample_abnormal_results.json", results)
+    write_json(OUTPUT_DIR / "sample_quality_cases.json", quality_cases)
+    write_json(OUTPUT_DIR / "sample_dashboard_summary.json", dashboard_summary)
+    write_json(OUTPUT_DIR / "sample_dashboard_top.json", dashboard_top)
 
 
 def write_json(path: Path, payload: object) -> None:

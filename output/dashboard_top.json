@@ -1,141 +1,104 @@
 {
   "top_components": [
     {
-      "component": "R125",
-      "defect_count": 3,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "C210",
-      "defect_count": 2,
+      "component": "C8",
+      "defect_count": 6,
       "main_defect_type": "多锡"
     },
     {
-      "component": "U10",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
+      "component": "C9",
+      "defect_count": 5,
+      "main_defect_type": "多锡"
     },
     {
-      "component": "R10",
+      "component": "C6",
       "defect_count": 1,
-      "main_defect_type": "少锡"
+      "main_defect_type": "多锡"
     },
     {
-      "component": "R11",
+      "component": "C7",
       "defect_count": 1,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "R12",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "R13",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "R14",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
+      "main_defect_type": "多锡"
     }
   ],
   "top_pads": [
     {
-      "component": "R125",
-      "pad": "1",
-      "defect_count": 3,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "C210",
-      "pad": "1",
-      "defect_count": 1,
+      "component": "C8",
+      "pad": "2",
+      "defect_count": 5,
       "main_defect_type": "多锡"
     },
     {
-      "component": "C210",
+      "component": "C9",
+      "pad": "2",
+      "defect_count": 4,
+      "main_defect_type": "多锡"
+    },
+    {
+      "component": "C6",
       "pad": "2",
       "defect_count": 1,
       "main_defect_type": "多锡"
     },
     {
-      "component": "U10",
-      "pad": "5",
+      "component": "C7",
+      "pad": "2",
       "defect_count": 1,
-      "main_defect_type": "少锡"
+      "main_defect_type": "多锡"
     },
     {
-      "component": "R10",
+      "component": "C8",
       "pad": "1",
       "defect_count": 1,
-      "main_defect_type": "少锡"
+      "main_defect_type": "多锡"
     },
     {
-      "component": "R11",
+      "component": "C9",
       "pad": "1",
       "defect_count": 1,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "R12",
-      "pad": "1",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "R13",
-      "pad": "1",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
-    },
-    {
-      "component": "R14",
-      "pad": "1",
-      "defect_count": 1,
-      "main_defect_type": "少锡"
+      "main_defect_type": "多锡"
     }
   ],
   "top_products": [
     {
-      "product_name": "A产品",
-      "defect_count": 11,
-      "main_defect_type": "少锡"
+      "product_name": "C1024412AB13",
+      "defect_count": 13,
+      "main_defect_type": "多锡"
     }
   ],
   "top_patterns": [
     {
-      "abnormal_pattern": "整板趋势异常",
-      "defect_count": 5
+      "abnormal_pattern": "连续3板同点异常",
+      "defect_count": 9
     },
     {
-      "abnormal_pattern": "连续3板同点异常",
-      "defect_count": 3
+      "abnormal_pattern": "单点偶发异常",
+      "defect_count": 2
     },
     {
       "abnormal_pattern": "同一元件多Pad异常",
       "defect_count": 2
-    },
-    {
-      "abnormal_pattern": "单点偶发异常",
-      "defect_count": 1
     }
   ],
   "top_case_locations": [
     {
-      "component": "R125",
+      "component": "C8",
       "pad": "1",
       "case_count": 1
     },
     {
-      "component": "C210",
-      "pad": "多Pad",
+      "component": "C8",
+      "pad": "2",
       "case_count": 1
     },
     {
-      "component": "多元件",
+      "component": "C9",
       "pad": "1",
+      "case_count": 1
+    },
+    {
+      "component": "C9",
+      "pad": "2",
       "case_count": 1
     }
   ]
