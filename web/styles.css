@@ -140,6 +140,31 @@ main {
   line-height: 1.1;
 }
 
+.metric.tone-danger {
+  border-color: #fecdca;
+}
+
+.metric.tone-danger strong {
+  color: var(--danger);
+}
+
+.metric.tone-warn strong {
+  color: var(--warning);
+}
+
+.metric.tone-ok strong {
+  color: var(--ok);
+}
+
+.delta {
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .tabs {
   display: flex;
   gap: 6px;
@@ -254,6 +279,32 @@ tr:last-child td {
   color: var(--low);
 }
 
+.risk-row-高 > td {
+  background: #fff5f5;
+}
+
+.risk-row-高 > td:first-child {
+  box-shadow: inset 4px 0 0 var(--danger);
+}
+
+.risk-row-中 > td:first-child {
+  box-shadow: inset 4px 0 0 var(--warning);
+}
+
+/* Newly-arrived abnormal rows flash once after an auto-update. */
+.is-new > td {
+  animation: rowflash 3s ease-out;
+}
+
+@keyframes rowflash {
+  0% {
+    background: #fff3bf;
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 .defect-少锡 {
   color: #175cd3;
   font-weight: 700;
@@ -312,6 +363,29 @@ tr:last-child td {
 
 .empty.error {
   color: #f08a8a;
+}
+
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  background: #17202b;
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: 8px;
+  border-left: 4px solid var(--accent);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.22);
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .event-view {

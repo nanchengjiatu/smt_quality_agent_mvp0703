@@ -25,6 +25,12 @@ const state = {
   // Last data version seen from /api/live; a higher one means the server
   // re-ran the pipeline (new over_volume data) so we reload automatically.
   liveVersion: 0,
+  // Summary from the previous load, for showing metric deltas (▲/▼).
+  prevSummary: {},
+  // Keys of abnormals seen on the previous load, to detect newly-added rows.
+  prevAbnormalKeys: new Set(),
+  // Keys flagged as new on the last auto-update, flashed once then cleared.
+  newAbnormalKeys: new Set(),
 };
 
 let liveTimer = null;
@@ -93,6 +99,15 @@ async function loadData(meta) {
       fetchJson(DATA_PATHS.drilldown).catch(() => null),
     ]);
 
+    // Work out deltas and newly-added abnormals before overwriting state.
+    const prevKeys = state.prevAbnormalKeys || new Set();
+    const newlyAdded = (meta && meta.auto)
+      ? abnormals.filter((item) => !prevKeys.has(abnormalKey(item)))
+      : [];
+    state.prevSummary = state.summary || {};
+    state.newAbnormalKeys = new Set(newlyAdded.map(abnormalKey));
+    state.prevAbnormalKeys = new Set(abnormals.map(abnormalKey));
+
     state.abnormals = abnormals;
     state.cases = cases;
     state.summary = summary;
@@ -101,6 +116,10 @@ async function loadData(meta) {
     state.drilldown = drilldown;
     dataStatus.textContent = composeStatus(meta, abnormals, cases);
     render();
+
+    if (meta && meta.auto) {
+      showToast(newlyAdded.length ? `检测到 ${newlyAdded.length} 条新异常` : "数据已更新");
+    }
   } catch (error) {
     dataStatus.textContent = "数据加载失败，请先运行 python3 serve.py";
     viewRoot.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -211,27 +230,64 @@ function render() {
 
 function renderMetrics() {
   const summary = state.summary || {};
+  const prev = state.prevSummary || {};
   const metrics = [
-    ["异常总数", summary.abnormal_count ?? 0],
-    ["少锡", summary.less_solder_count ?? 0],
-    ["多锡", summary.more_solder_count ?? 0],
-    ["未关闭案例", summary.open_case_count ?? 0],
-    ["高风险", summary.high_risk_count ?? 0],
-    ["中风险", summary.medium_risk_count ?? 0],
-    ["低风险", summary.low_risk_count ?? 0],
-    ["复测有效率", formatRate(summary.recheck_effective_rate)],
+    { label: "异常总数", key: "abnormal_count", tone: "warn" },
+    { label: "少锡", key: "less_solder_count" },
+    { label: "多锡", key: "more_solder_count" },
+    { label: "未关闭案例", key: "open_case_count" },
+    { label: "高风险", key: "high_risk_count", tone: "danger" },
+    { label: "中风险", key: "medium_risk_count" },
+    { label: "低风险", key: "low_risk_count" },
+    { label: "复测有效率", key: "recheck_effective_rate", rate: true, tone: "ok" },
   ];
 
-  document.getElementById("metrics").innerHTML = metrics.map(([label, value]) => `
-    <article class="metric">
-      <span>${label}</span>
-      <strong>${value}</strong>
-    </article>
-  `).join("");
+  document.getElementById("metrics").innerHTML = metrics.map((metric) => {
+    const raw = summary[metric.key];
+    const value = metric.rate ? formatRate(raw) : (raw ?? 0);
+    const delta = metric.rate ? "" : deltaBadge(raw, prev[metric.key]);
+    return `
+      <article class="metric${metric.tone ? " tone-" + metric.tone : ""}">
+        <span>${metric.label}</span>
+        <strong>${value}${delta}</strong>
+      </article>
+    `;
+  }).join("");
+}
+
+// Small ▲/▼ change indicator vs the previous load; neutral colour because the
+// "good" direction differs per metric (more abnormals bad, higher rate good).
+function deltaBadge(current, previous) {
+  if (current == null || previous == null || current === previous) {
+    return "";
+  }
+  const diff = current - previous;
+  return `<em class="delta">${diff > 0 ? "▲" : "▼"}${Math.abs(diff)}</em>`;
+}
+
+function abnormalKey(item) {
+  return [item.board_sn, item.component, item.pad, item.inspect_time, item.defect_type].join("|");
+}
+
+function showToast(text) {
+  let toast = document.getElementById("toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "toast";
+    toast.className = "toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = text;
+  toast.classList.add("show");
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toast.classList.remove("show"), 4000);
 }
 
 function renderAbnormalView() {
   const rows = filterItems(state.abnormals);
+  // Snapshot the flash keys then clear, so newly-added rows highlight once.
+  const flashKeys = state.newAbnormalKeys || new Set();
+  state.newAbnormalKeys = new Set();
   if (!rows.length) {
     viewRoot.innerHTML = `<div class="empty">没有匹配的异常记录</div>`;
     return;
@@ -254,20 +310,21 @@ function renderAbnormalView() {
           </tr>
         </thead>
         <tbody>
-          ${rows.map(renderAbnormalRow).join("")}
+          ${rows.map((item) => renderAbnormalRow(item, flashKeys)).join("")}
         </tbody>
       </table>
     </div>
   `;
 }
 
-function renderAbnormalRow(item) {
+function renderAbnormalRow(item, flashKeys = new Set()) {
   const trigger = findDrilldownTrigger((state.drilldown || {}).triggers, item.component, item.pad);
   const badge = trigger
     ? `<button class="dd-entry-badge" data-dd="${escapeHtml(trigger.trigger_id)}" title="进入下钻分析">🔴 三板连发</button>`
     : "";
+  const rowClass = `risk-row-${item.risk_level}${flashKeys.has(abnormalKey(item)) ? " is-new" : ""}`;
   return `
-    <tr>
+    <tr class="${escapeHtml(rowClass)}">
       <td>${escapeHtml(item.inspect_time)}</td>
       <td>${escapeHtml(item.board_sn)}</td>
       <td>${escapeHtml(item.component)} / Pad ${escapeHtml(item.pad)} ${badge}</td>
