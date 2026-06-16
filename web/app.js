@@ -8,6 +8,8 @@ const DATA_PATHS = {
 };
 
 const API_REFRESH = "/api/refresh";
+const API_LIVE = "/api/live";
+const LIVE_POLL_MS = 4000;
 
 const state = {
   activeView: "abnormal",
@@ -20,7 +22,12 @@ const state = {
   // Per-stage status from the last /api/refresh, keyed by stage name.
   // Lets each view show an honest "load failed" message instead of a blank.
   stageStatus: {},
+  // Last data version seen from /api/live; a higher one means the server
+  // re-ran the pipeline (new over_volume data) so we reload automatically.
+  liveVersion: 0,
 };
+
+let liveTimer = null;
 
 const viewRoot = document.getElementById("viewRoot");
 const dataStatus = document.getElementById("dataStatus");
@@ -60,6 +67,10 @@ async function refreshData() {
       state.stageStatus[stage.stage] = stage;
     });
     await loadData(report);
+    if (report.version) {
+      // Adopt the version we just produced so live polling doesn't re-trigger.
+      state.liveVersion = report.version;
+    }
   } catch (error) {
     dataStatus.textContent = `刷新失败：${error.message}（确认已用 python3 serve.py 启动服务）`;
   } finally {
@@ -68,8 +79,8 @@ async function refreshData() {
   }
 }
 
-async function loadData(report) {
-  if (!report) {
+async function loadData(meta) {
+  if (!meta) {
     dataStatus.textContent = "加载数据中...";
   }
   try {
@@ -88,7 +99,7 @@ async function loadData(report) {
     state.top = top;
     state.analysis = analysis;
     state.drilldown = drilldown;
-    dataStatus.textContent = composeStatus(report, abnormals, cases);
+    dataStatus.textContent = composeStatus(meta, abnormals, cases);
     render();
   } catch (error) {
     dataStatus.textContent = "数据加载失败，请先运行 python3 serve.py";
@@ -96,16 +107,78 @@ async function loadData(report) {
   }
 }
 
-function composeStatus(report, abnormals, cases) {
+function composeStatus(meta, abnormals, cases) {
   let text = `已加载 ${abnormals.length} 条异常，${cases.length} 个质量案例`;
-  if (report && report.generated_at) {
-    text += ` · 更新于 ${report.generated_at}`;
-    const failed = (report.stages || []).filter((stage) => !stage.ok).map((stage) => stage.stage);
+  if (meta && meta.generated_at) {
+    text += meta.auto ? ` · 自动更新于 ${meta.generated_at}` : ` · 更新于 ${meta.generated_at}`;
+    const failed = (meta.stages || []).filter((stage) => !stage.ok).map((stage) => stage.stage);
     if (failed.length) {
       text += ` · 部分失败：${failed.join("、")}`;
     }
   }
   return text;
+}
+
+// Poll the server's data version; reload automatically when over_volume data
+// has changed (the watcher re-ran the pipeline and bumped the version).
+async function pollLive() {
+  try {
+    const response = await fetch(`${API_LIVE}?t=${Date.now()}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const live = await response.json();
+    updateLiveBadge(live);
+    if (state.liveVersion === 0) {
+      state.liveVersion = live.version;
+      return;
+    }
+    if (live.version > state.liveVersion) {
+      state.liveVersion = live.version;
+      // The auto-run may have changed any stage; per-stage detail isn't in
+      // /api/live, so drop stale stage status and rely on null-data fallbacks.
+      state.stageStatus = {};
+      await loadData({ generated_at: live.updated_at, auto: true });
+    }
+  } catch (error) {
+    updateLiveBadge(null);
+  }
+}
+
+function updateLiveBadge(live) {
+  const badge = document.getElementById("liveBadge");
+  if (!badge) {
+    return;
+  }
+  if (!live) {
+    badge.textContent = "● 离线";
+    badge.className = "live-badge offline";
+    badge.title = "无法连接服务";
+    return;
+  }
+  if (!live.watching) {
+    badge.textContent = "● 手动";
+    badge.className = "live-badge manual";
+    badge.title = "实时监听未开启（--no-watch）";
+    return;
+  }
+  if (live.last_error) {
+    badge.textContent = "● 实时(异常)";
+    badge.className = "live-badge warn";
+    badge.title = `监听出错：${live.last_error}`;
+    return;
+  }
+  badge.textContent = "● 实时";
+  badge.className = "live-badge on";
+  badge.title = live.last_check ? `最近检查：${live.last_check}` : "实时监听中";
+}
+
+function startLivePolling() {
+  if (liveTimer) {
+    clearInterval(liveTimer);
+  }
+  pollLive();
+  liveTimer = setInterval(pollLive, LIVE_POLL_MS);
 }
 
 // If a stage failed during the last refresh, return its error message so a
@@ -475,4 +548,4 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-loadData();
+loadData().then(startLivePolling);

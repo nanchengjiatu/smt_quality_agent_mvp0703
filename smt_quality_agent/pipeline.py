@@ -44,6 +44,13 @@ from (
 ) t;
 """
 
+# Cheap change-detection fingerprint for the over_volume table: row count plus
+# the latest fdate. Cheap enough to poll on a short interval; a change in
+# either value means new/replaced data the pipeline should pick up.
+OVER_VOLUME_FINGERPRINT_QUERY = (
+    "select count(*) || '|' || coalesce(max(fdate)::text, '') from over_volume;"
+)
+
 # Files each stage owns, used by the server's /api/status to report freshness.
 STAGE_FILES: dict[str, tuple[str, ...]] = {
     "over_volume": (
@@ -69,6 +76,17 @@ def _psql_json(query: str, database: str) -> list[dict[str, Any]]:
 
 def load_over_volume_rows(database: str = DEFAULT_DATABASE) -> list[dict[str, Any]]:
     return _psql_json(OVER_VOLUME_QUERY, database)
+
+
+def over_volume_fingerprint(database: str = DEFAULT_DATABASE) -> str:
+    """Return a cheap signature of over_volume; changes when data changes."""
+    completed = subprocess.run(
+        ["psql", "-X", "-d", database, "-t", "-A", "-c", OVER_VOLUME_FINGERPRINT_QUERY],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
 
 
 def load_full_excel_rows(database: str = DEFAULT_DATABASE) -> list[dict[str, Any]]:

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-16 02:45:20",
+  "generated_at": "2026-06-16 03:05:06",
   "source_table": "l780db.public.full_excel0608",
   "trigger_rule": "同一焊盘连续 3 块及以上生产板判 NG（复测不计入）",
   "window_records": 300,

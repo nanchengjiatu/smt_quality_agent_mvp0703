@@ -64,6 +64,40 @@ h1 {
   opacity: 0.6;
 }
 
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cfd6e4;
+  user-select: none;
+}
+
+.live-badge.on {
+  color: #74e08c;
+  border-color: rgba(116, 224, 140, 0.4);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.live-badge.warn {
+  color: #f0c27a;
+  border-color: rgba(240, 194, 122, 0.4);
+}
+
+.live-badge.offline,
+.live-badge.manual {
+  color: #9aa4b6;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
 .icon-button.spinning {
   animation: spin 0.8s linear infinite;
 }
