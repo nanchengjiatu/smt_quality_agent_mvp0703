@@ -28,11 +28,41 @@ more-solder and less-solder defects.
   precursor drift detection, parameter exclusion, and recheck analysis.
 - `run_param_analysis_demo.py`: reads `l780db.public.full_excel0608` and
   writes `output/param_analysis.json` for the 事件与根因分析 view.
+- `smt_quality_agent/drilldown.py`: three-consecutive-board same-pad trigger
+  detection plus the deep-dive analysis package (±300-record window, step vs
+  gradual classification, scope, recovery, periodicity, setpoint-change events).
+- `run_drilldown_demo.py`: writes `output/drilldown.json` for the drill-down
+  workbench (web/drilldown.js).
 - `run_over_volume_demo.py`: main entry, reads `l780db.public.over_volume` with `psql`.
 - `run_demo.py`: runs the sample CSV data through the rule engine.
 - `run_l780db_demo.py`: reads PostgreSQL `l780db.public.affected_model_0601` with `psql`.
 - `scripts/import_xlsx_to_l780db.py`: streams SPI XLSX exports into PostgreSQL.
 - `web/`: static MVP page for realtime abnormalities, quality cases, and dashboard.
+- `smt_quality_agent/pipeline.py`: orchestrates all three analysis stages
+  (over_volume / param_analysis / drilldown) and writes every `output/*.json`.
+- `serve.py`: one-command launcher — runs the pipeline then serves `web/` +
+  `output/` on a single port, with a refresh endpoint (pure stdlib).
+
+## Quick start (one command)
+
+```bash
+cd /home/xianghappyman/smt_quality_agent_mvp0608
+python3 serve.py            # runs the pipeline once, then serves on :8502
+```
+
+Open `http://<host>:8502/` — it redirects to the web app. The ↻ button in the
+header re-runs the analysis pipeline on the server (`POST /api/refresh`) and
+reloads the data; if a data source is unreachable, the affected tab shows an
+honest failure message while the rest keep working.
+
+Options: `--port <n>` (default 8502), `--database <name>` (default `l780db`),
+`--no-refresh-on-start` (serve existing `output/` without recomputing).
+
+Endpoints: `GET /` → web app · `GET /output/*` data · `POST /api/refresh`
+re-run pipeline (per-stage status JSON) · `GET /api/status` file freshness.
+
+The individual `run_*_demo.py` scripts below remain available for debugging a
+single stage from the CLI; the server runs all of them via the pipeline.
 
 ## Run (over_volume, primary)
 
@@ -93,6 +123,31 @@ This writes `output/param_analysis.json`, rendered by the 事件与根因分析 
 
 Dates in `fdate` are stored as text (`2024/1/9 3:12`); the module parses them
 before sorting, so do not rely on SQL `order by fdate` for this table.
+
+## Run (three-board same-pad drill-down)
+
+When one pad fails on 3 or more consecutive production boards (re-inspections
+neither break nor extend the run), a drill-down package is generated:
+
+```bash
+python3 run_drilldown_demo.py
+```
+
+This writes `output/drilldown.json`. Entry points in the web UI: the
+"三板连发下钻" cards on the 事件与根因分析 tab, and the red "三板连发" badge on
+matching rows of the 实时异常 table. The workbench shows:
+
+- run chart of the pad's records around the trigger (requested ±300, actual
+  counts reported honestly), with baseline mean / ±3σ band, trigger region,
+  recheck hollow points, and setpoint-change (`*_Plan`) event lines;
+- step vs gradual classification (reuses the precursor thresholds), scope
+  (isolated pad / component-wide / board-wide), recovery tracking (linked to
+  setpoint changes when one precedes the recovery), NG-run periodicity check;
+- comparison tabs: sibling pads of the same component, a Comp_PX/PY pad map
+  colored by trigger-board NG share, and the parameter deviation table;
+- findings are clickable and highlight the matching chart range. The chat
+  panel is an offline placeholder until an LLM backend is configured — all
+  rule-based analysis works without it.
 
 ## Run (sample CSV)
 

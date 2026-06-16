@@ -4,7 +4,10 @@ const DATA_PATHS = {
   summary: "../output/dashboard_summary.json",
   top: "../output/dashboard_top.json",
   analysis: "../output/param_analysis.json",
+  drilldown: "../output/drilldown.json",
 };
+
+const API_REFRESH = "/api/refresh";
 
 const state = {
   activeView: "abnormal",
@@ -13,6 +16,10 @@ const state = {
   summary: {},
   top: {},
   analysis: null,
+  drilldown: null,
+  // Per-stage status from the last /api/refresh, keyed by stage name.
+  // Lets each view show an honest "load failed" message instead of a blank.
+  stageStatus: {},
 };
 
 const viewRoot = document.getElementById("viewRoot");
@@ -21,7 +28,7 @@ const defectFilter = document.getElementById("defectFilter");
 const riskFilter = document.getElementById("riskFilter");
 const searchInput = document.getElementById("searchInput");
 
-document.getElementById("refreshButton").addEventListener("click", loadData);
+document.getElementById("refreshButton").addEventListener("click", refreshData);
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => {
@@ -36,15 +43,43 @@ document.querySelectorAll(".tab").forEach((button) => {
   control.addEventListener("input", render);
 });
 
-async function loadData() {
-  dataStatus.textContent = "加载数据中...";
+// Re-run the analysis pipeline on the server, then reload the generated JSON.
+async function refreshData() {
+  const button = document.getElementById("refreshButton");
+  button.classList.add("spinning");
+  button.disabled = true;
+  dataStatus.textContent = "正在重新分析数据...";
   try {
-    const [abnormals, cases, summary, top, analysis] = await Promise.all([
+    const response = await fetch(API_REFRESH, { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const report = await response.json();
+    state.stageStatus = {};
+    (report.stages || []).forEach((stage) => {
+      state.stageStatus[stage.stage] = stage;
+    });
+    await loadData(report);
+  } catch (error) {
+    dataStatus.textContent = `刷新失败：${error.message}（确认已用 python3 serve.py 启动服务）`;
+  } finally {
+    button.classList.remove("spinning");
+    button.disabled = false;
+  }
+}
+
+async function loadData(report) {
+  if (!report) {
+    dataStatus.textContent = "加载数据中...";
+  }
+  try {
+    const [abnormals, cases, summary, top, analysis, drilldown] = await Promise.all([
       fetchJson(DATA_PATHS.abnormals),
       fetchJson(DATA_PATHS.cases),
       fetchJson(DATA_PATHS.summary),
       fetchJson(DATA_PATHS.top),
       fetchJson(DATA_PATHS.analysis).catch(() => null),
+      fetchJson(DATA_PATHS.drilldown).catch(() => null),
     ]);
 
     state.abnormals = abnormals;
@@ -52,12 +87,32 @@ async function loadData() {
     state.summary = summary;
     state.top = top;
     state.analysis = analysis;
-    dataStatus.textContent = `已加载 ${abnormals.length} 条异常，${cases.length} 个质量案例`;
+    state.drilldown = drilldown;
+    dataStatus.textContent = composeStatus(report, abnormals, cases);
     render();
   } catch (error) {
-    dataStatus.textContent = "数据加载失败，请先运行 python3 run_over_volume_demo.py";
+    dataStatus.textContent = "数据加载失败，请先运行 python3 serve.py";
     viewRoot.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
   }
+}
+
+function composeStatus(report, abnormals, cases) {
+  let text = `已加载 ${abnormals.length} 条异常，${cases.length} 个质量案例`;
+  if (report && report.generated_at) {
+    text += ` · 更新于 ${report.generated_at}`;
+    const failed = (report.stages || []).filter((stage) => !stage.ok).map((stage) => stage.stage);
+    if (failed.length) {
+      text += ` · 部分失败：${failed.join("、")}`;
+    }
+  }
+  return text;
+}
+
+// If a stage failed during the last refresh, return its error message so a
+// view can show an honest failure state instead of a generic empty one.
+function stageError(stageName) {
+  const stage = state.stageStatus[stageName];
+  return stage && stage.ok === false ? stage.error || "数据加载失败" : null;
 }
 
 async function fetchJson(path) {
@@ -134,11 +189,15 @@ function renderAbnormalView() {
 }
 
 function renderAbnormalRow(item) {
+  const trigger = findDrilldownTrigger((state.drilldown || {}).triggers, item.component, item.pad);
+  const badge = trigger
+    ? `<button class="dd-entry-badge" data-dd="${escapeHtml(trigger.trigger_id)}" title="进入下钻分析">🔴 三板连发</button>`
+    : "";
   return `
     <tr>
       <td>${escapeHtml(item.inspect_time)}</td>
       <td>${escapeHtml(item.board_sn)}</td>
-      <td>${escapeHtml(item.component)} / Pad ${escapeHtml(item.pad)}</td>
+      <td>${escapeHtml(item.component)} / Pad ${escapeHtml(item.pad)} ${badge}</td>
       <td class="${defectClass(item.defect_type)}">${escapeHtml(item.defect_type)}</td>
       <td>${escapeHtml(item.abnormal_pattern)}</td>
       <td><span class="badge risk-${escapeHtml(item.risk_level)}">${escapeHtml(item.risk_level)}</span></td>
@@ -212,7 +271,10 @@ function renderDashboardView() {
 function renderEventsView() {
   const analysis = state.analysis;
   if (!analysis) {
-    viewRoot.innerHTML = `<div class="empty">暂无事件分析数据，请先运行 python3 run_param_analysis_demo.py</div>`;
+    const error = stageError("param_analysis");
+    viewRoot.innerHTML = error
+      ? `<div class="empty error">事件分析数据加载失败：${escapeHtml(error)}</div>`
+      : `<div class="empty">暂无事件分析数据，点击右上角 ↻ 刷新生成</div>`;
     return;
   }
 
@@ -237,6 +299,7 @@ function renderEventsView() {
           `).join("")}
         </div>
       </section>
+      ${renderDrilldownPanel()}
       ${events.length
         ? events.map(renderEventCard).join("")
         : `<div class="empty">数据时间范围内未检出聚集事件</div>`}
@@ -296,6 +359,50 @@ function renderEventCard(event) {
     </section>
   `;
 }
+
+function renderDrilldownPanel() {
+  const error = stageError("drilldown");
+  if (error) {
+    return `<section class="panel"><h2>三板连发下钻</h2><div class="empty error">下钻数据加载失败：${escapeHtml(error)}</div></section>`;
+  }
+  const triggers = (state.drilldown || {}).triggers || [];
+  if (!triggers.length) {
+    return "";
+  }
+  return `
+    <section class="panel">
+      <h2>三板连发下钻 <span class="details">${escapeHtml((state.drilldown || {}).trigger_rule || "")}</span></h2>
+      <div class="dd-trigger-cards">
+        ${triggers.map((trigger) => `
+          <article class="dd-trigger-card">
+            <div>
+              <strong>${escapeHtml(trigger.trigger_id)} · 焊盘 ${escapeHtml(trigger.pad_name)}</strong>
+              <span class="${defectClass(trigger.main_defect_cn)}">${escapeHtml(trigger.main_defect_cn)}</span>
+            </div>
+            <p class="details">
+              ${escapeHtml(trigger.model)} · ${escapeHtml(trigger.start_time)} ~ ${escapeHtml(trigger.end_time)} ·
+              连续 ${escapeHtml(trigger.trigger_board_count)} 块板 ·
+              ${escapeHtml(trigger.change_type.verdict)} · ${escapeHtml(trigger.recovery.verdict)}
+            </p>
+            <button class="dd-enter" data-dd="${escapeHtml(trigger.trigger_id)}">进入下钻分析 →</button>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+viewRoot.addEventListener("click", (event) => {
+  const entry = event.target.closest("[data-dd]");
+  if (!entry) {
+    return;
+  }
+  const triggers = (state.drilldown || {}).triggers || [];
+  const trigger = triggers.find((item) => item.trigger_id === entry.dataset.dd);
+  if (trigger) {
+    openDrilldown(trigger);
+  }
+});
 
 function renderRankPanel(title, rows, labelFn, valueFn) {
   return `

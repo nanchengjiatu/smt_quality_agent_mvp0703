@@ -59,6 +59,21 @@ h1 {
   cursor: pointer;
 }
 
+.icon-button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.icon-button.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 main {
   width: min(1400px, 100%);
   margin: 0 auto;
@@ -261,6 +276,10 @@ tr:last-child td {
   text-align: center;
 }
 
+.empty.error {
+  color: #f08a8a;
+}
+
 .event-view {
   display: grid;
   gap: 14px;
@@ -319,6 +338,482 @@ tr:last-child td {
   margin: 0;
   padding: 0 4px;
   font-size: 12px;
+}
+
+/* ===== 三板连发下钻工作台 ===== */
+
+body.dd-open {
+  overflow: hidden;
+}
+
+.dd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.dd-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 22px;
+  background: #17202b;
+  color: #fff;
+  border-bottom: 4px solid var(--danger);
+}
+
+.dd-back {
+  flex: none;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  padding: 0 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dd-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  flex-wrap: wrap;
+}
+
+.dd-sub {
+  margin-top: 4px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.dd-badge {
+  background: #fee4e2;
+  color: var(--danger);
+}
+
+.dd-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  padding: 14px 22px 28px;
+  align-items: start;
+}
+
+.dd-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.dd-chart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.dd-metric-switch,
+.dd-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dd-tabs {
+  margin-bottom: 10px;
+}
+
+.dd-chip {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--muted);
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dd-chip.active {
+  border-color: var(--accent);
+  background: #ecfdf5;
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+.dd-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.dd-toggle {
+  display: flex;
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.dd-toggle input {
+  width: 16px;
+  height: 16px;
+}
+
+.dd-chart {
+  position: relative;
+}
+
+.dd-chart svg {
+  display: block;
+}
+
+.dd-chart .dd-point,
+.dd-chart .dd-param-group {
+  cursor: pointer;
+}
+
+.dd-chart-tip {
+  position: absolute;
+  z-index: 3;
+  max-width: 240px;
+  background: #17202b;
+  color: #f1f5f9;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 4px 14px rgba(13, 21, 31, 0.35);
+  pointer-events: none;
+}
+
+.dd-tip-muted {
+  color: #94a3b8;
+}
+
+.dd-tip-ng {
+  color: #fda29b;
+  font-weight: 700;
+}
+
+.dd-toggle-disabled {
+  opacity: 0.55;
+}
+
+.dd-overlay-pick select {
+  width: auto;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 13px;
+}
+
+.dd-overlay-line {
+  fill: none;
+  stroke: #1d4ed8;
+  stroke-width: 1.4;
+}
+
+.dd-overlay-point {
+  fill: #1d4ed8;
+  stroke: #fff;
+  stroke-width: 1;
+  cursor: pointer;
+}
+
+.dd-overlay-axis {
+  fill: #1d4ed8;
+  font-size: 10px;
+}
+
+.dd-grid {
+  stroke: #edf1f5;
+}
+
+.dd-axis-text {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.dd-band {
+  fill: rgba(15, 118, 110, 0.08);
+}
+
+.dd-mean {
+  stroke: var(--accent);
+  stroke-dasharray: 6 4;
+}
+
+.dd-trigger-region {
+  fill: rgba(180, 35, 24, 0.08);
+  stroke: rgba(180, 35, 24, 0.35);
+  stroke-dasharray: 4 3;
+}
+
+.dd-highlight-region {
+  fill: rgba(181, 71, 8, 0.16);
+}
+
+.dd-param-line {
+  stroke: #7c3aed;
+  stroke-dasharray: 3 3;
+}
+
+.dd-param-text {
+  fill: #7c3aed;
+  font-size: 9px;
+}
+
+.dd-line {
+  fill: none;
+  stroke: #98a2b3;
+  stroke-width: 1.2;
+}
+
+.dd-point {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 1;
+}
+
+.dd-point.ng {
+  fill: var(--danger);
+}
+
+.dd-point.recheck {
+  fill: #fff;
+  stroke: var(--muted);
+  stroke-width: 1.6;
+}
+
+.dd-point.trigger {
+  stroke: var(--danger);
+  stroke-width: 2;
+}
+
+.dd-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dd-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dd-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dd-dot-ng {
+  background: var(--danger);
+}
+
+.dd-dot-ok {
+  background: var(--accent);
+}
+
+.dd-dot-recheck {
+  background: #fff;
+  border: 2px solid var(--muted);
+}
+
+.dd-swatch {
+  width: 14px;
+  height: 9px;
+  display: inline-block;
+}
+
+.dd-swatch-trigger {
+  background: rgba(180, 35, 24, 0.15);
+  border: 1px dashed rgba(180, 35, 24, 0.5);
+}
+
+.dd-swatch-band {
+  background: rgba(15, 118, 110, 0.12);
+}
+
+.dd-swatch-param {
+  border-left: 2px dashed #7c3aed;
+  width: 6px;
+}
+
+.dd-finding-list .dd-finding-clickable {
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 3px 6px;
+  margin-left: -6px;
+}
+
+.dd-finding-list .dd-finding-clickable:hover {
+  background: #fef0c7;
+}
+
+.dd-finding-list .dd-finding-clickable.active {
+  background: #fde68a;
+  font-weight: 600;
+}
+
+.dd-sparklines {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.dd-sparkline {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.dd-sparkline span {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.dd-ng-mark {
+  color: var(--danger);
+  font-style: normal;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.dd-heat-trigger {
+  stroke: var(--ok);
+  stroke-width: 3;
+}
+
+.dd-param-table {
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.dd-chat {
+  position: sticky;
+  top: 78px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.dd-chat h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.dd-chat-note {
+  background: #f8fafc;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.dd-chat-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dd-chat-input {
+  display: flex;
+  gap: 8px;
+}
+
+.dd-chat-input button {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  padding: 0 16px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dd-chat-input button:disabled {
+  background: #98a2b3;
+  cursor: not-allowed;
+}
+
+.dd-entry-badge {
+  border: 0;
+  border-radius: 5px;
+  background: #fee4e2;
+  color: var(--danger);
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dd-trigger-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.dd-trigger-card {
+  border: 1px solid #fda29b;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fffbfa;
+  display: grid;
+  gap: 6px;
+}
+
+.dd-trigger-card > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dd-trigger-card p {
+  margin: 0;
+}
+
+.dd-enter {
+  justify-self: start;
+  border: 0;
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 1100px) {
+  .dd-body {
+    grid-template-columns: 1fr;
+  }
+
+  .dd-chat {
+    position: static;
+  }
 }
 
 @media (max-width: 1100px) {
