@@ -30,7 +30,7 @@ class RulesEngineTest(unittest.TestCase):
         self.assertEqual(len(cases), 3)
 
         patterns = {(case["defect_type"], case["abnormal_pattern"]) for case in cases}
-        self.assertIn(("少锡", "连续3板同点异常"), patterns)
+        self.assertIn(("少锡", "同点多板异常"), patterns)
         self.assertIn(("多锡", "同一元件多Pad异常"), patterns)
         self.assertIn(("少锡", "整板趋势异常"), patterns)
 

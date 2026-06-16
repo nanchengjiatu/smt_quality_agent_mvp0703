@@ -74,7 +74,7 @@ class Abnormal:
 
 
 RULE_MATRIX: dict[tuple[str, str, str], list[tuple[str, str]]] = {
-    ("少锡", "连续3板同点异常", "高"): [
+    ("少锡", "同点多板异常", "高"): [
         ("钢网堵孔", "立即清洗钢网，并检查对应 Pad 开口是否堵塞"),
         ("锡膏变干", "检查锡膏回温、搅拌、使用时间和黏度状态"),
         ("局部支撑不良", "检查该区域 PCB 支撑和平整度"),
@@ -94,7 +94,7 @@ RULE_MATRIX: dict[tuple[str, str, str], list[tuple[str, str]]] = {
         ("刮刀压力过大", "立即检查并调整刮刀压力"),
         ("锡膏状态异常", "检查锡膏回温、搅拌、使用时间和环境条件"),
     ],
-    ("多锡", "连续3板同点异常", "高"): [
+    ("多锡", "同点多板异常", "高"): [
         ("钢网底部残锡", "清洗钢网底部，并复测下一块板"),
         ("钢网开口异常", "检查对应 Pad 钢网开口尺寸和状态"),
         ("脱模异常", "检查脱模速度、脱模距离和 PCB 支撑"),
@@ -315,7 +315,7 @@ def classify_pattern(
     repeat_count = count_three_board_repeat(current, all_abnormals)
     current.repeat_count = repeat_count
     if repeat_count >= 3:
-        return "连续3板同点异常", "高"
+        return "同点多板异常", "高"
 
     if enable_board_trend:
         board_ratio = current.board_abnormal_ratio
@@ -395,7 +395,7 @@ def quality_case_group_key(item: dict[str, Any]) -> tuple[str, ...]:
         item["abnormal_pattern"],
     )
 
-    if item["abnormal_pattern"] == "连续3板同点异常":
+    if item["abnormal_pattern"] == "同点多板异常":
         return base + (item["component"], item["pad"])
     if item["abnormal_pattern"] == "同一元件多Pad异常":
         return base + (item["board_sn"], item["component"])
@@ -414,11 +414,12 @@ def build_evidence_summary(items: list[dict[str, Any]]) -> str:
     latest = items[-1]
     pattern = latest["abnormal_pattern"]
 
-    if pattern == "连续3板同点异常":
+    if pattern == "同点多板异常":
         boards = "、".join(item["board_sn"] for item in items)
         return (
             f"{latest['component']} Pad{latest['pad']} 在 {boards} "
-            f"连续出现{latest['defect_type']}，主指标为 {latest['main_metric']}。"
+            f"共 {len(items)} 块板重复出现{latest['defect_type']}（不要求连续），"
+            f"主指标为 {latest['main_metric']}。"
         )
 
     if pattern == "同一元件多Pad异常":

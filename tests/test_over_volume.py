@@ -59,7 +59,7 @@ class OverVolumeTest(unittest.TestCase):
         self.assertEqual(len(abnormals), 3)
         self.assertEqual(abnormals[0]["defect_type"], "多锡")
         self.assertEqual(abnormals[0]["main_metric"], "volume")
-        self.assertEqual(abnormals[0]["abnormal_pattern"], "连续3板同点异常")
+        self.assertEqual(abnormals[0]["abnormal_pattern"], "同点多板异常")
         self.assertEqual(abnormals[0]["risk_level"], "高")
         self.assertEqual(len(cases), 1)
         self.assertEqual(cases[0]["component"], "C8")
