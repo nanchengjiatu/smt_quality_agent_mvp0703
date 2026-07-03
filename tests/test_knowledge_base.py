@@ -1,8 +1,11 @@
 import unittest
 
 from smt_quality_agent.knowledge_base import (
+    DECISION_RULES,
     RULES,
+    RULES_WITHOUT_MECHANISM,
     abnormal_cause_candidates,
+    diagnose,
     disposition_for,
     enrich_with_ontology_ids,
     event_cause_candidates,
@@ -11,7 +14,32 @@ from smt_quality_agent.knowledge_base import (
     rule_catalog,
     scope_root_cause_candidate,
 )
-from smt_quality_agent.ontology import SCOPE_TO_CONCEPT_ID
+from smt_quality_agent.ontology import MECHANISMS, SCOPE_TO_CONCEPT_ID
+
+
+def sample_observation(**overrides) -> dict:
+    observation = {
+        "direction": "多锡",
+        "category": "单Pad孤立异常",
+        "spatial": "spatial.single_pad",
+        "temporal": "temporal.consecutive",
+        "validity": "validity.valid",
+        "scope_detail": "同元件和全量窗口没有显示明显扩散。",
+        "trend_kind": "step",
+        "trend_detail": "触发段均值跳升。",
+        "drifted_parameters": [],
+        "cross_model_baseline": False,
+        "recovery_kind": "recovered",
+        "recovery_parameters": [],
+        "recovery_detail": "",
+        "periodic": False,
+        "periodic_gap": None,
+        "periodicity_detail": "",
+        "spi_detail": "",
+        "data_status": "pass",
+    }
+    observation.update(overrides)
+    return observation
 
 
 class RuleRegistryTest(unittest.TestCase):
@@ -44,6 +72,64 @@ class RuleRegistryTest(unittest.TestCase):
         self.assertGreater(spi["confidence_base"], scope["confidence_base"])
         self.assertGreater(scope["confidence_base"], event["confidence_base"])
         self.assertGreater(event["confidence_base"], fallback["confidence_base"])
+
+
+class MechanismBindingTest(unittest.TestCase):
+    def test_every_rule_binds_a_registered_mechanism_or_is_exempt(self) -> None:
+        for rule in RULES:
+            if rule["id"] in RULES_WITHOUT_MECHANISM:
+                self.assertIsNone(rule["mechanism"], rule["id"])
+                continue
+            self.assertIn(rule["mechanism"], MECHANISMS, rule["id"])
+
+    def test_mechanisms_declare_required_domain_attributes(self) -> None:
+        for mechanism_id, mechanism in MECHANISMS.items():
+            props = mechanism.get("properties") or {}
+            for key in ("element", "stage", "direction", "onset",
+                        "auto_checks", "manual_checks"):
+                self.assertIn(key, props, f"{mechanism_id} missing {key}")
+
+
+class DecisionLayerTest(unittest.TestCase):
+    def test_decision_rules_are_ordered_gates_first(self) -> None:
+        orders = [rule["order"] for rule in DECISION_RULES]
+        self.assertEqual(orders, sorted(orders))
+        self.assertEqual(DECISION_RULES[0]["id"], "decide.spi_false_alarm_gate")
+
+    def test_spi_gate_outranks_everything(self) -> None:
+        result = diagnose(sample_observation(
+            validity="validity.spi_suspect",
+            category="疑似SPI假异常",
+            spi_detail="主指标偏差不明显",
+        ))
+        primary = result["root_cause_assessment"][0]
+        self.assertEqual(primary["rule_id"], "rule.spi_false_alarm_review")
+        self.assertEqual(primary["mechanism_id"], "mech.spi_false_call")
+        self.assertEqual(result["confidence"], "高")
+
+    def test_cross_model_baseline_downgrades_drift_confidence(self) -> None:
+        result = diagnose(sample_observation(
+            drifted_parameters=["printspeed"], cross_model_baseline=True,
+        ))
+        drift = next(
+            item for item in result["root_cause_assessment"]
+            if item["rule_id"] == "rule.parameter_drift"
+        )
+        self.assertEqual(drift["confidence"], 0.6)
+        self.assertEqual(drift["evidence_level"], "中")
+
+    def test_data_suspect_lowers_overall_confidence(self) -> None:
+        result = diagnose(sample_observation(data_status="review"))
+        self.assertEqual(result["confidence"], "低")
+
+    def test_diagnose_caps_and_ranks_candidates(self) -> None:
+        result = diagnose(sample_observation())
+        assessments = result["root_cause_assessment"]
+        self.assertLessEqual(len(assessments), 3)
+        confidences = [item["confidence"] for item in assessments]
+        self.assertEqual(confidences, sorted(confidences, reverse=True))
+        self.assertEqual([item["priority"] for item in assessments],
+                         list(range(1, len(assessments) + 1)))
 
 
 class LookupTest(unittest.TestCase):
@@ -85,7 +171,7 @@ class LookupTest(unittest.TestCase):
 class RuleCatalogTest(unittest.TestCase):
     def test_rule_catalog_exposes_reviewable_rules(self) -> None:
         catalog = rule_catalog()
-        self.assertEqual(catalog["version"], "rule-catalog-v4")
+        self.assertEqual(catalog["version"], "rule-catalog-v5")
         self.assertGreater(catalog["rule_count"], 20)
         self.assertEqual(catalog["rule_count"], len(catalog["rules"]))
         rule_ids = [rule["rule_id"] for rule in catalog["rules"]]

@@ -10,14 +10,21 @@ smt:SMTQualityOntology
     rdf:type smt:Ontology ;
     rdfs:label "SMT Quality Agent Ontology"@en ;
     rdfs:comment "锡膏印刷 + SPI 多锡/少锡异常管理本体。"@zh ;
-    smt:version "spi-printing-v2" ;
+    smt:version "spi-printing-v3" ;
     smt:focus "锡膏印刷 + SPI 多锡/少锡异常管理"@zh .
 
 smt:ProcessStep rdf:type rdfs:Class ; rdfs:label "工序"@zh .
 smt:InspectionMethod rdf:type rdfs:Class ; rdfs:label "检测方法"@zh .
 smt:DefectDirection rdf:type rdfs:Class ; rdfs:label "缺陷方向"@zh .
-smt:AbnormalScope rdf:type rdfs:Class ; rdfs:label "异常范围"@zh .
+smt:AbnormalScope rdf:type rdfs:Class ; rdfs:label "异常范围(v2,已废弃)"@zh .
+smt:ProcessStage rdf:type rdfs:Class ; rdfs:label "工序阶段"@zh .
+smt:EquipmentElement rdf:type rdfs:Class ; rdfs:label "设备要素"@zh .
+smt:Material rdf:type rdfs:Class ; rdfs:label "物料"@zh .
+smt:SpatialExtent rdf:type rdfs:Class ; rdfs:label "空间范围"@zh .
+smt:TemporalPattern rdf:type rdfs:Class ; rdfs:label "时间模式"@zh .
+smt:DataValidity rdf:type rdfs:Class ; rdfs:label "数据有效性"@zh .
 smt:RootCauseCandidate rdf:type rdfs:Class ; rdfs:label "根因候选"@zh .
+smt:FailureMechanism rdf:type rdfs:Class ; rdfs:label "失效机理"@zh .
 smt:EvidenceType rdf:type rdfs:Class ; rdfs:label "证据类型"@zh .
 smt:ActionType rdf:type rdfs:Class ; rdfs:label "排查动作"@zh .
 smt:Disposition rdf:type rdfs:Class ; rdfs:label "处置方式"@zh .
@@ -31,6 +38,19 @@ smt:usesDisposition rdf:type rdf:Property ; rdfs:label "使用处置方式"@zh .
 smt:priority rdf:type rdf:Property ; rdfs:label "优先级"@zh .
 smt:direction rdf:type rdf:Property ; rdfs:label "缺陷方向值"@zh .
 smt:judgedBy rdf:type rdf:Property ; rdfs:label "判定口径"@zh .
+smt:deprecated rdf:type rdf:Property ; rdfs:label "已废弃"@zh .
+smt:verification rdf:type rdf:Property ; rdfs:label "核验方式"@zh .
+smt:availability rdf:type rdf:Property ; rdfs:label "可得性"@zh .
+smt:affectsElement rdf:type rdf:Property ; rdfs:label "作用部位"@zh .
+smt:occursAtStage rdf:type rdf:Property ; rdfs:label "所属工序阶段"@zh .
+smt:onset rdf:type rdf:Property ; rdfs:label "起病形态"@zh .
+smt:signature rdf:type rdf:Property ; rdfs:label "指标签名"@zh .
+smt:signatureText rdf:type rdf:Property ; rdfs:label "签名描述"@zh .
+smt:typicalSpatial rdf:type rdf:Property ; rdfs:label "典型空间范围"@zh .
+smt:typicalTemporal rdf:type rdf:Property ; rdfs:label "典型时间模式"@zh .
+smt:earlyWarning rdf:type rdf:Property ; rdfs:label "可预警性"@zh .
+smt:autoCheck rdf:type rdf:Property ; rdfs:label "自动核验证据"@zh .
+smt:manualCheck rdf:type rdf:Property ; rdfs:label "人工确认证据"@zh .
 smt:version rdf:type rdf:Property ; rdfs:label "版本"@zh .
 smt:focus rdf:type rdf:Property ; rdfs:label "聚焦范围"@zh .
 
@@ -70,6 +90,7 @@ smt:scope.board_same_direction
     skos:altLabel "整板同向趋势"@zh ;
     smt:judgedBy "drilldown"@zh ;
     smt:priority 1 ;
+    smt:deprecated true ;
     smt:hasCandidateCause smt:root_cause.board_printing_condition_drift ;
     smt:hasCandidateCause smt:root_cause.board_paste_supply_or_print_action ;
     smt:requiresEvidence smt:evidence.board_same_direction_trend ;
@@ -80,7 +101,8 @@ smt:scope.board_trend
     rdfs:label "整板趋势异常"@zh ;
     rdfs:comment "实时口径：单板异常点占比达到阈值（≥5% 中风险、≥10% 高风险），不区分方向。"@zh ;
     smt:judgedBy "realtime"@zh ;
-    smt:priority 1 .
+    smt:priority 1 ;
+    smt:deprecated true .
 
 smt:scope.component_multi_pad
     rdf:type smt:AbnormalScope ;
@@ -89,6 +111,7 @@ smt:scope.component_multi_pad
     skos:altLabel "同一元件多Pad异常"@zh ;
     smt:judgedBy "realtime+drilldown"@zh ;
     smt:priority 2 ;
+    smt:deprecated true ;
     smt:hasCandidateCause smt:root_cause.component_area_stencil_contamination ;
     smt:hasCandidateCause smt:root_cause.component_area_blockage_or_support ;
     smt:requiresEvidence smt:evidence.component_multi_pad_ng .
@@ -100,6 +123,7 @@ smt:scope.consecutive_same_pad
     skos:altLabel "连续同点异常"@zh ;
     smt:judgedBy "drilldown"@zh ;
     smt:priority 3 ;
+    smt:deprecated true ;
     smt:requiresEvidence smt:evidence.full_spi_window ;
     smt:requiresEvidence smt:evidence.same_pad_consecutive_ng .
 
@@ -108,7 +132,8 @@ smt:scope.repeated_same_pad
     rdfs:label "同点多板异常"@zh ;
     rdfs:comment "实时口径：同一产品、元件、Pad 在 ≥3 块不同生产板重复异常，不要求连续。"@zh ;
     smt:judgedBy "realtime"@zh ;
-    smt:priority 3 .
+    smt:priority 3 ;
+    smt:deprecated true .
 
 smt:scope.single_pad_isolated
     rdf:type smt:AbnormalScope ;
@@ -116,6 +141,7 @@ smt:scope.single_pad_isolated
     rdfs:comment "下钻口径：连续触发局限于单 Pad，同元件其他 Pad 与全量窗口均未见扩散。"@zh ;
     smt:judgedBy "drilldown"@zh ;
     smt:priority 4 ;
+    smt:deprecated true ;
     smt:hasCandidateCause smt:root_cause.stencil_single_aperture_residue ;
     smt:hasCandidateCause smt:root_cause.stencil_single_aperture_blockage .
 
@@ -126,6 +152,7 @@ smt:scope.single_point_random
     skos:altLabel "单点偶发"@zh ;
     smt:judgedBy "realtime"@zh ;
     smt:priority 4 ;
+    smt:deprecated true ;
     smt:usesDisposition smt:disposition.fast_single_point_check .
 
 smt:scope.local_area
@@ -134,6 +161,7 @@ smt:scope.local_area
     rdfs:comment "同一局部区域多个 Pad 或元件异常，优先判断局部钢网、PCB 支撑和贴合状态。"@zh ;
     skos:altLabel "区域异常"@zh ;
     smt:judgedBy "drilldown"@zh ;
+    smt:deprecated true ;
     smt:hasCandidateCause smt:root_cause.local_stencil_contamination ;
     smt:hasCandidateCause smt:root_cause.local_stencil_blockage_or_rolling ;
     smt:usesDisposition smt:disposition.immediate_field_check .
@@ -143,8 +171,129 @@ smt:scope.suspected_spi_false_alarm
     rdfs:label "疑似SPI假异常"@zh ;
     rdfs:comment "排除项驱动的归类：NG 标签与主指标偏差不一致，先复核 SPI 程序/识别框/阈值，再谈物理根因。"@zh ;
     smt:judgedBy "drilldown"@zh ;
+    smt:deprecated true ;
     smt:hasCandidateCause smt:root_cause.spi_program_false_alarm ;
     smt:requiresEvidence smt:evidence.raw_spi_image .
+
+smt:stage.alignment
+    rdf:type smt:ProcessStage ;
+    rdfs:label "对位"@zh ;
+    rdfs:comment "印刷循环第一段：视觉识别 Fiducial，钢网与 PCB 对位。"@zh .
+
+smt:stage.print_stroke
+    rdf:type smt:ProcessStage ;
+    rdfs:label "印刷行程"@zh ;
+    rdfs:comment "刮刀带动锡膏滚动填充钢网开口的行程段。"@zh .
+
+smt:stage.release
+    rdf:type smt:ProcessStage ;
+    rdfs:label "脱模"@zh ;
+    rdfs:comment "PCB 与钢网分离、锡膏从开口转移到 Pad 的阶段。"@zh .
+
+smt:stage.cleaning_cycle
+    rdf:type smt:ProcessStage ;
+    rdfs:label "擦网周期"@zh ;
+    rdfs:comment "按设定频率进行的钢网底面自动清洁循环。"@zh .
+
+smt:element.stencil_aperture
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "钢网开口"@zh ;
+    rdfs:comment "单个钢网孔：开口尺寸、孔壁状态、通透性。"@zh .
+
+smt:element.stencil_underside
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "钢网底面"@zh ;
+    rdfs:comment "钢网与 PCB 接触面：残锡、污染、清洁状态。"@zh .
+
+smt:element.squeegee
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "刮刀"@zh ;
+    rdfs:comment "前/后刮刀：压力、角度、磨损状态。"@zh .
+
+smt:element.board_support
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "支撑与夹持"@zh ;
+    rdfs:comment "PCB 支撑、夹持、板翘,决定钢网-PCB 密合。"@zh .
+
+smt:element.cleaning_system
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "擦网系统"@zh ;
+    rdfs:comment "自动擦网机构：擦网纸、溶剂、真空。"@zh .
+
+smt:element.vision_alignment
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "视觉对位系统"@zh ;
+    rdfs:comment "Fiducial 识别与对位机构。"@zh .
+
+smt:element.printing_program
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "印刷程序"@zh ;
+    rdfs:comment "印刷机参数设定：速度、压力、脱模、擦网频率等。"@zh .
+
+smt:element.spi_program
+    rdf:type smt:EquipmentElement ;
+    rdfs:label "SPI程序"@zh ;
+    rdfs:comment "SPI 测量框、阈值、Gerber 对位设置。"@zh .
+
+smt:material.solder_paste
+    rdf:type smt:Material ;
+    rdfs:label "锡膏"@zh ;
+    rdfs:comment "印刷物料：回温、搅拌、使用时长、流变状态。"@zh .
+
+smt:spatial.single_pad
+    rdf:type smt:SpatialExtent ;
+    rdfs:label "单Pad"@zh ;
+    rdfs:comment "异常局限于单个 Pad,同元件其他 Pad 与窗口未扩散。"@zh .
+
+smt:spatial.component_multi_pad
+    rdf:type smt:SpatialExtent ;
+    rdfs:label "同元件多Pad"@zh ;
+    rdfs:comment "同一元件 ≥2 个 Pad 同板同向异常。"@zh .
+
+smt:spatial.local_area
+    rdf:type smt:SpatialExtent ;
+    rdfs:label "局部区域"@zh ;
+    rdfs:comment "≥3 个不同 NG Pad 聚集在 ≤35% 坐标跨度内。"@zh .
+
+smt:spatial.board_wide
+    rdf:type smt:SpatialExtent ;
+    rdfs:label "整板"@zh ;
+    rdfs:comment "板 NG 占比 ≥50% 且板记录行数 ≥10。"@zh .
+
+smt:temporal.sporadic
+    rdf:type smt:TemporalPattern ;
+    rdfs:label "偶发"@zh ;
+    rdfs:comment "单板出现,无重复。"@zh .
+
+smt:temporal.consecutive
+    rdf:type smt:TemporalPattern ;
+    rdfs:label "连续N板"@zh ;
+    rdfs:comment "中间无 PASS 生产板的连续 ≥3 板(下钻触发口径,复测不计)。"@zh .
+
+smt:temporal.repeated
+    rdf:type smt:TemporalPattern ;
+    rdfs:label "跨板重复"@zh ;
+    rdfs:comment "≥3 块不同生产板重复,不要求连续(实时口径)。"@zh .
+
+smt:temporal.periodic
+    rdf:type smt:TemporalPattern ;
+    rdfs:label "周期复发"@zh ;
+    rdfs:comment "NG 连段以近似固定间隔重复出现。"@zh .
+
+smt:validity.valid
+    rdf:type smt:DataValidity ;
+    rdfs:label "数据可信"@zh ;
+    rdfs:comment "数据连续性与 SPI 标签一致性检查均通过。"@zh .
+
+smt:validity.spi_suspect
+    rdf:type smt:DataValidity ;
+    rdfs:label "疑似SPI误判"@zh ;
+    rdfs:comment "NG 标签但主指标偏差不显著,需先复核 SPI 程序。"@zh .
+
+smt:validity.data_suspect
+    rdf:type smt:DataValidity ;
+    rdfs:label "数据连续性存疑"@zh ;
+    rdfs:comment "触发段含复测/跨机种/板数不足等数据疑点。"@zh .
 
 smt:root_cause.stencil_single_aperture_residue
     rdf:type smt:RootCauseCandidate ;
@@ -234,42 +383,167 @@ smt:root_cause.local_printing_state
 smt:evidence.full_spi_window
     rdf:type smt:EvidenceType ;
     rdfs:label "前后500条全量SPI窗口"@zh ;
-    rdfs:comment "围绕触发事件抽取的上下文窗口，用于范围、趋势、复判和排除检查。"@zh .
+    rdfs:comment "围绕触发事件抽取的上下文窗口，用于范围、趋势、复判和排除检查。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
 
 smt:evidence.same_pad_consecutive_ng
     rdf:type smt:EvidenceType ;
     rdfs:label "同Pad连续NG证据"@zh ;
-    rdfs:comment "同产品、同元件、同 Pad 连续生产板同方向 NG。"@zh .
+    rdfs:comment "同产品、同元件、同 Pad 连续生产板同方向 NG。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
 
 smt:evidence.component_multi_pad_ng
     rdf:type smt:EvidenceType ;
     rdfs:label "同元件多Pad证据"@zh ;
-    rdfs:comment "同一元件多个 Pad 在同一窗口内同步异常。"@zh .
+    rdfs:comment "同一元件多个 Pad 在同一窗口内同步异常。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
 
 smt:evidence.board_same_direction_trend
     rdf:type smt:EvidenceType ;
     rdfs:label "整板同向趋势证据"@zh ;
-    rdfs:comment "整板多个位置呈现同方向异常或异常比例升高。"@zh .
+    rdfs:comment "整板多个位置呈现同方向异常或异常比例升高。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
 
 smt:evidence.parameter_drift
     rdf:type smt:EvidenceType ;
     rdfs:label "参数偏离证据"@zh ;
-    rdfs:comment "印刷参数实际值相对计划值或历史基线出现偏离。"@zh .
+    rdfs:comment "印刷参数实际值相对计划值或历史基线出现偏离。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
 
 smt:evidence.recovery
     rdf:type smt:EvidenceType ;
     rdfs:label "恢复性证据"@zh ;
-    rdfs:comment "触发后是否恢复，以及恢复是否与处置或参数变化对齐。"@zh .
+    rdfs:comment "触发后是否恢复，以及恢复是否与处置或参数变化对齐。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
 
 smt:evidence.data_continuity
     rdf:type smt:EvidenceType ;
     rdfs:label "数据连续性证据"@zh ;
-    rdfs:comment "检查生产板序、时间窗口和复测记录是否支撑当前判断。"@zh .
+    rdfs:comment "检查生产板序、时间窗口和复测记录是否支撑当前判断。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
+
+smt:evidence.trend_slope
+    rdf:type smt:EvidenceType ;
+    rdfs:label "触发前趋势斜率"@zh ;
+    rdfs:comment "触发前该 Pad 指标的爬升斜率与末段连升板数(渐变/突变判别)。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
+
+smt:evidence.periodic_recurrence
+    rdf:type smt:EvidenceType ;
+    rdfs:label "NG连段周期性复发"@zh ;
+    rdfs:comment "历史 NG 连段间隔的变异系数低于阈值,呈固定节拍。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
+
+smt:evidence.spi_metric_mismatch
+    rdf:type smt:EvidenceType ;
+    rdfs:label "NG标签与主指标不符"@zh ;
+    rdfs:comment "记录判 NG 但主指标偏差 <20%,提示 SPI 程序误判。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "available"@zh .
+
+smt:evidence.metric_signature
+    rdf:type smt:EvidenceType ;
+    rdfs:label "三指标签名"@zh ;
+    rdfs:comment "体积/面积/高度偏差组合特征与机理签名的匹配度(第二阶段)。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "planned"@zh .
+
+smt:evidence.cleaning_frequency_reference
+    rdf:type smt:EvidenceType ;
+    rdfs:label "擦网频率参照"@zh ;
+    rdfs:comment "NG 连段间隔与 CleaningFrequency 设定值的整数倍关系(第二阶段)。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "planned"@zh .
+
+smt:evidence.mark_deviation_trend
+    rdf:type smt:EvidenceType ;
+    rdfs:label "MarkDeviation趋势"@zh ;
+    rdfs:comment "机器级对位偏差随板序的趋势(第二阶段)。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "planned"@zh .
+
+smt:evidence.cleaning_marker
+    rdf:type smt:EvidenceType ;
+    rdfs:label "擦网事件对齐"@zh ;
+    rdfs:comment "NG 连段与真实擦网事件的对齐(CleaningAfterLastBoard 当前未采集)。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "not_collected"@zh .
+
+smt:evidence.print_direction_split
+    rdf:type smt:EvidenceType ;
+    rdfs:label "印刷方向分组差异"@zh ;
+    rdfs:comment "NG 按印刷方向分组的偏斜(PrintDirection 当前未采集)。"@zh ;
+    smt:verification "auto"@zh ;
+    smt:availability "not_collected"@zh .
 
 smt:evidence.raw_spi_image
     rdf:type smt:EvidenceType ;
     rdfs:label "原始SPI图像"@zh ;
-    rdfs:comment "用于确认测量框、Gerber 对位、阈值和实物异常真实性。"@zh .
+    rdfs:comment "用于确认测量框、Gerber 对位、阈值和实物异常真实性。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.microscope_aperture
+    rdf:type smt:EvidenceType ;
+    rdfs:label "显微检查钢网开口"@zh ;
+    rdfs:comment "显微确认开口堵塞、孔壁与开口尺寸。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.stencil_underside_check
+    rdf:type smt:EvidenceType ;
+    rdfs:label "钢网底面目视检查"@zh ;
+    rdfs:comment "目视/擦拭确认钢网底面残锡与污染。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.paste_condition_log
+    rdf:type smt:EvidenceType ;
+    rdfs:label "锡膏状态记录"@zh ;
+    rdfs:comment "回温、搅拌、开封使用时长、余量记录(当前无系统数据)。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.stencil_version_ecn
+    rdf:type smt:EvidenceType ;
+    rdfs:label "钢网版本/ECN记录"@zh ;
+    rdfs:comment "钢网开口设计版本与变更历史。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.board_support_check
+    rdf:type smt:EvidenceType ;
+    rdfs:label "支撑与板翘检查"@zh ;
+    rdfs:comment "PCB 支撑、夹持、板翘和钢网贴合的现场确认。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.change_approval
+    rdf:type smt:EvidenceType ;
+    rdfs:label "变更审批记录"@zh ;
+    rdfs:comment "参数/程序变更的审批与执行记录。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.squeegee_inspection
+    rdf:type smt:EvidenceType ;
+    rdfs:label "刮刀状态检查"@zh ;
+    rdfs:comment "刮刀刃口磨损、压力平衡、安装状态的现场确认。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.cleaning_supplies_check
+    rdf:type smt:EvidenceType ;
+    rdfs:label "擦网耗材检查"@zh ;
+    rdfs:comment "擦网纸、溶剂、真空状态的现场确认。"@zh ;
+    smt:verification "manual"@zh .
+
+smt:evidence.alignment_check
+    rdf:type smt:EvidenceType ;
+    rdfs:label "Fiducial/对位复核"@zh ;
+    rdfs:comment "视觉识别、Gerber/钢网/PCB 对位的现场复核。"@zh ;
+    smt:verification "manual"@zh .
 
 smt:action.inspect_single_stencil_aperture
     rdf:type smt:ActionType ;
@@ -307,3 +581,191 @@ smt:disposition.fast_single_point_check
     rdfs:label "按单点异常做快速确认"@zh ;
     rdfs:comment "低扩散风险时的处置口径。"@zh ;
     smt:priority "P3"@zh .
+
+smt:mech.aperture_clogging
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "钢网开口堵塞"@zh ;
+    rdfs:comment "锡膏残留逐渐堵塞开口,供锡量随生产递减,单孔或细间距区域少锡。"@zh ;
+    smt:affectsElement smt:element.stencil_aperture ;
+    smt:occursAtStage smt:stage.release ;
+    smt:direction "少锡"@zh ;
+    smt:onset "gradual"@zh ;
+    smt:signature "avdp:down,aadp:down|flat,ahdp:down"@zh ;
+    smt:signatureText "体积↓ 面积↓/平 高度↓"@zh ;
+    smt:typicalSpatial smt:spatial.single_pad, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.consecutive, smt:temporal.periodic ;
+    smt:earlyWarning "可预警：体积偏差 EWMA 渐变爬升"@zh ;
+    smt:autoCheck smt:evidence.trend_slope, smt:evidence.cleaning_marker ;
+    smt:manualCheck smt:evidence.microscope_aperture, smt:evidence.raw_spi_image .
+
+smt:mech.poor_release
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "脱模不良"@zh ;
+    rdfs:comment "脱模速度/距离不适配或孔壁粗糙,锡膏未完整转移,少锡或形状不稳。"@zh ;
+    smt:affectsElement smt:element.stencil_aperture ;
+    smt:occursAtStage smt:stage.release ;
+    smt:direction "少锡"@zh ;
+    smt:onset "any"@zh ;
+    smt:signature "avdp:down,aadp:flat,ahdp:any"@zh ;
+    smt:signatureText "体积↓ 面积平 高度不稳"@zh ;
+    smt:typicalSpatial smt:spatial.single_pad, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.consecutive, smt:temporal.repeated ;
+    smt:autoCheck smt:evidence.parameter_drift ;
+    smt:manualCheck smt:evidence.microscope_aperture, smt:evidence.board_support_check .
+
+smt:mech.understencil_residue
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "钢网底部残锡转印"@zh ;
+    rdfs:comment "钢网底面残锡在后续板转印,多锡且面积偏大,随擦网间隔累积。"@zh ;
+    smt:affectsElement smt:element.stencil_underside ;
+    smt:occursAtStage smt:stage.cleaning_cycle ;
+    smt:direction "多锡"@zh ;
+    smt:onset "gradual"@zh ;
+    smt:signature "avdp:up,aadp:up,ahdp:flat|down"@zh ;
+    smt:signatureText "体积↑ 面积↑ 高度平/↓"@zh ;
+    smt:typicalSpatial smt:spatial.single_pad, smt:spatial.component_multi_pad ;
+    smt:typicalTemporal smt:temporal.consecutive, smt:temporal.periodic ;
+    smt:earlyWarning "可预警：擦网间隔内面积偏差递增"@zh ;
+    smt:autoCheck smt:evidence.trend_slope, smt:evidence.cleaning_marker ;
+    smt:manualCheck smt:evidence.stencil_underside_check .
+
+smt:mech.poor_gasketing
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "密合不良渗锡"@zh ;
+    rdfs:comment "钢网与 Pad 密合不良(支撑差/板翘/局部变形),锡膏从缝隙渗出,面积大高度低。"@zh ;
+    smt:affectsElement smt:element.board_support ;
+    smt:occursAtStage smt:stage.print_stroke ;
+    smt:direction "多锡"@zh ;
+    smt:onset "step"@zh ;
+    smt:signature "avdp:up|flat,aadp:up,ahdp:down"@zh ;
+    smt:signatureText "面积↑ 高度↓"@zh ;
+    smt:typicalSpatial smt:spatial.local_area, smt:spatial.component_multi_pad ;
+    smt:typicalTemporal smt:temporal.consecutive, smt:temporal.repeated ;
+    smt:manualCheck smt:evidence.board_support_check, smt:evidence.raw_spi_image .
+
+smt:mech.slump
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "塌陷"@zh ;
+    rdfs:comment "锡膏流变性劣化导致印刷后塌边,面积增大高度下降而体积基本不变。"@zh ;
+    smt:affectsElement smt:material.solder_paste ;
+    smt:occursAtStage smt:stage.release ;
+    smt:direction "多锡"@zh ;
+    smt:onset "gradual"@zh ;
+    smt:signature "avdp:flat,aadp:up,ahdp:down"@zh ;
+    smt:signatureText "体积平 面积↑ 高度↓"@zh ;
+    smt:typicalSpatial smt:spatial.board_wide, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.consecutive ;
+    smt:earlyWarning "可预警：高度/面积偏差反向漂移"@zh ;
+    smt:autoCheck smt:evidence.metric_signature ;
+    smt:manualCheck smt:evidence.paste_condition_log .
+
+smt:mech.paste_rheology_drift
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "锡膏流变劣化"@zh ;
+    rdfs:comment "锡膏变干/黏度漂移(回温不足、使用超时、环境),整板指标同向渐变。"@zh ;
+    smt:affectsElement smt:material.solder_paste ;
+    smt:occursAtStage smt:stage.print_stroke ;
+    smt:direction "双向"@zh ;
+    smt:onset "gradual"@zh ;
+    smt:signature "avdp:any,aadp:any,ahdp:any"@zh ;
+    smt:signatureText "三指标同向渐变"@zh ;
+    smt:typicalSpatial smt:spatial.board_wide ;
+    smt:typicalTemporal smt:temporal.consecutive ;
+    smt:earlyWarning "可预警：整板均值 EWMA 漂移"@zh ;
+    smt:autoCheck smt:evidence.trend_slope ;
+    smt:manualCheck smt:evidence.paste_condition_log .
+
+smt:mech.supply_interruption
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "供锡中断/漏印"@zh ;
+    rdfs:comment "锡膏余量不足、漏印或单次行程异常,整板突发性大面积少锡。"@zh ;
+    smt:affectsElement smt:material.solder_paste ;
+    smt:occursAtStage smt:stage.print_stroke ;
+    smt:direction "少锡"@zh ;
+    smt:onset "step"@zh ;
+    smt:signature "avdp:down,aadp:down,ahdp:down"@zh ;
+    smt:signatureText "整板三指标同时↓↓"@zh ;
+    smt:typicalSpatial smt:spatial.board_wide ;
+    smt:typicalTemporal smt:temporal.sporadic ;
+    smt:manualCheck smt:evidence.paste_condition_log .
+
+smt:mech.parameter_mismatch
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "参数漂移/设定不适配"@zh ;
+    rdfs:comment "印刷参数实际值偏离设定,或程序设定本身不适配当前机种/钢网。"@zh ;
+    smt:affectsElement smt:element.printing_program ;
+    smt:occursAtStage smt:stage.print_stroke ;
+    smt:direction "双向"@zh ;
+    smt:onset "step"@zh ;
+    smt:signatureText "视具体参数而定"@zh ;
+    smt:typicalSpatial smt:spatial.board_wide, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.consecutive ;
+    smt:autoCheck smt:evidence.parameter_drift, smt:evidence.recovery ;
+    smt:manualCheck smt:evidence.change_approval .
+
+smt:mech.squeegee_one_side
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "刮刀单边异常"@zh ;
+    rdfs:comment "前/后刮刀压力不平衡或单边磨损,仅某一印刷方向的板异常。"@zh ;
+    smt:affectsElement smt:element.squeegee ;
+    smt:occursAtStage smt:stage.print_stroke ;
+    smt:direction "双向"@zh ;
+    smt:onset "any"@zh ;
+    smt:signatureText "按印刷方向分组呈差异"@zh ;
+    smt:typicalSpatial smt:spatial.board_wide, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.repeated ;
+    smt:autoCheck smt:evidence.print_direction_split ;
+    smt:manualCheck smt:evidence.squeegee_inspection .
+
+smt:mech.cleaning_cycle_mismatch
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "擦网周期不匹配"@zh ;
+    rdfs:comment "擦网频率或清洁效果与产出不匹配,NG 以固定节拍周期复发。"@zh ;
+    smt:affectsElement smt:element.cleaning_system ;
+    smt:occursAtStage smt:stage.cleaning_cycle ;
+    smt:direction "多锡"@zh ;
+    smt:onset "periodic"@zh ;
+    smt:signatureText "周期性复发,擦网后复位"@zh ;
+    smt:typicalSpatial smt:spatial.single_pad, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.periodic ;
+    smt:earlyWarning "可预警：周期检测 + 擦网频率参照"@zh ;
+    smt:autoCheck smt:evidence.periodic_recurrence, smt:evidence.cleaning_frequency_reference, smt:evidence.cleaning_marker ;
+    smt:manualCheck smt:evidence.cleaning_supplies_check .
+
+smt:mech.alignment_offset
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "对位偏移"@zh ;
+    rdfs:comment "Fiducial 识别或钢网-PCB 对位偏移;Pad 级 offset 当前不可观测,仅机器级 MarkDeviation。"@zh ;
+    smt:affectsElement smt:element.vision_alignment ;
+    smt:occursAtStage smt:stage.alignment ;
+    smt:direction "双向"@zh ;
+    smt:onset "step"@zh ;
+    smt:signatureText "面积异常伴方向性(观测受限)"@zh ;
+    smt:typicalSpatial smt:spatial.board_wide, smt:spatial.local_area ;
+    smt:typicalTemporal smt:temporal.consecutive ;
+    smt:autoCheck smt:evidence.mark_deviation_trend ;
+    smt:manualCheck smt:evidence.alignment_check .
+
+smt:mech.spi_false_call
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "SPI程序误判"@zh ;
+    rdfs:comment "SPI 测量框/阈值/对位设置问题导致的假 NG,非实物异常。"@zh ;
+    smt:affectsElement smt:element.spi_program ;
+    smt:occursAtStage smt:stage.alignment ;
+    smt:direction "双向"@zh ;
+    smt:onset "any"@zh ;
+    smt:signatureText "NG 标签与主指标偏差不符"@zh ;
+    smt:typicalSpatial smt:spatial.single_pad ;
+    smt:typicalTemporal smt:temporal.repeated ;
+    smt:autoCheck smt:evidence.spi_metric_mismatch ;
+    smt:manualCheck smt:evidence.raw_spi_image .
+
+smt:mech.undetermined
+    rdf:type smt:FailureMechanism ;
+    rdfs:label "未定机理"@zh ;
+    rdfs:comment "证据不足以锁定单一物理机理时的兜底,按局部印刷状态异常处置。"@zh ;
+    smt:affectsElement smt:element.stencil_aperture ;
+    smt:occursAtStage smt:stage.print_stroke ;
+    smt:direction "双向"@zh ;
+    smt:onset "any"@zh ;
+    smt:manualCheck smt:evidence.raw_spi_image, smt:evidence.microscope_aperture .

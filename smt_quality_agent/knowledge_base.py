@@ -15,17 +15,25 @@ Rule schema (uniform across all rule types):
                         | exclusion_check | process_review | event_cause
                         | abnormal_cause
     condition           dict matching what the analysis provides
+    mechanism           ontology FailureMechanism ID (stamped from
+                        RULE_MECHANISMS; trend rules are exempt — 趋势形态
+                        只是证据,不足以锁定机理)
     cause / action      the judgment; *_template variants take .format() args
     evidence            canned evidence text (optional; analyses may override)
-    evidence_level      高/中/低 strength when the rule fires
     evidence_required   what must be collected before the cause can be固化
-    confidence_base     ranking weight, see CONFIDENCE_LADDER below
+    confidence_base     mechanism prior, see CONFIDENCE_LADDER below
     applies_when / not_sufficient_when / first_check
                         hand-written review-card text; only present where an
                         expert actually wrote it — never generated boilerplate
 
-CONFIDENCE_LADDER — confidence_base is the explicit ranking weight used by
-drilldown root-cause ordering (higher = shown first):
+v3 decision layer: ``DECISION_RULES`` (order 10–90) is the explicit诊断决策
+ladder — what to suspect first under which observation — and ``diagnose()``
+evaluates it over one drilldown observation. 最终置信度 = confidence_base ×
+证据乘数(声明在决策规则里),证据强度(evidence_level)由最终置信度分档
+推导(≥0.75 高 / ≥0.5 中 / <0.5 低),不再单独维护。
+
+CONFIDENCE_LADDER — confidence_base is the mechanism prior used for ranking
+(higher = shown first before evidence multipliers):
 
     0.85  direct time/image evidence (SPI false alarm, recovery after参数调整)
     0.80  fixed-cadence recurrence (maintenance cycle)
@@ -42,7 +50,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from smt_quality_agent.ontology import ontology_ids_for
+from smt_quality_agent.ontology import (
+    concept_label,
+    evidence_availability,
+    mechanism_by_id,
+    ontology_ids_for,
+)
 
 
 RECHECK_CRITERIA = [
@@ -76,7 +89,6 @@ SPI_FALSE_ALARM_ROOT_CAUSE = {
     "source": "knowledge_base",
     "cause": "SPI程序阈值或识别框异常",
     "action": "先用原始 SPI 图像复核测量框、Gerber 对位和该 Pad 上下限；确认实物异常前不要调整印刷参数。",
-    "evidence_level": "高",
     "evidence_required": ["原始 SPI 图像", "测量框/Gerber 对位", "Pad 上下限", "实物复核结果"],
     "confidence_base": 0.85,
     "applies_when": "当 SPI 标签与主指标偏差、原始图像或实物复核不一致时适用。",
@@ -92,7 +104,6 @@ PARAMETER_RECOVERY_ROOT_CAUSE = {
     "cause": "印刷程序设定不适配",
     "evidence_template": "{parameters} 调整后异常随即恢复，时间关系支持该判断。",
     "action_template": "固化 {parameters} 的有效设定，核对变更审批，并用同机种连续生产板确认参数窗口。",
-    "evidence_level": "高",
     "evidence_required": ["参数调整记录", "调整前后 SPI 趋势", "恢复板序列", "变更审批记录"],
     "confidence_base": 0.85,
 }
@@ -105,7 +116,6 @@ PERIODIC_ROOT_CAUSE = {
     "cause": "钢网清洗或锡膏维护周期不匹配",
     "evidence_template": "历史 NG 连段约每 {gap:g} 块板重复，具有固定节拍。",
     "action": "核对自动擦网、加锡膏和搅拌记录；将维护周期提前一个周期并比较复发间隔。",
-    "evidence_level": "高",
     "evidence_required": ["历史 NG 连段间隔", "自动擦网记录", "加锡膏/搅拌记录", "复发间隔对比"],
     "confidence_base": 0.8,
 }
@@ -130,7 +140,6 @@ FALLBACK_ROOT_CAUSE = {
     "cause": "局部印刷状态异常",
     "evidence": "现有数据仅能确认连续异常，尚不足以锁定单一物理原因。",
     "action": "复核触发 Pad 的钢网孔、Pad 表面、原始 SPI 图像及事件时段设备记录。",
-    "evidence_level": "低",
     "evidence_required": ["触发 Pad 原始 SPI 图像", "钢网孔状态", "Pad 表面状态", "设备事件记录"],
     "confidence_base": 0.35,
 }
@@ -530,7 +539,6 @@ _ABNORMAL_FALLBACK_RULE = {
     "source": "fallback",
     "cause": "继续观察",
     "action": "复测下一块板，确认是否重复发生",
-    "evidence_level": "低",
     "evidence_required": _ABNORMAL_EVIDENCE_REQUIRED,
     "confidence_base": 0.35,
 }
@@ -557,21 +565,94 @@ RULES: list[dict[str, Any]] = [
     PARAMETER_DRIFT_ROOT_CAUSE,
     FALLBACK_ROOT_CAUSE,
     *_finalize(_SCOPE_ROOT_CAUSE_RULES, "scope_root_cause", "knowledge_base",
-               {"evidence_level": "中", "recheck_method": DEFAULT_RECHECK_METHOD}),
+               { "recheck_method": DEFAULT_RECHECK_METHOD}),
     *_finalize(_TREND_ROOT_CAUSE_RULES, "trend_root_cause", "knowledge_base", {}),
     *_finalize(_PROCESS_REVIEW_RULES, "process_review", "knowledge_base.process_review", {}),
     *_finalize(_EVENT_CAUSE_RULES, "event_cause", "knowledge_base.event_rules",
-               {"confidence_base": 0.45, "evidence_level": "低",
+               {"confidence_base": 0.45,
                 "evidence_required": _EVENT_EVIDENCE_REQUIRED}),
     *_finalize(_ABNORMAL_CAUSE_RULES, "abnormal_cause", "knowledge_base.abnormal_rules",
-               {"confidence_base": 0.45, "evidence_level": "低",
+               {"confidence_base": 0.45,
                 "evidence_required": _ABNORMAL_EVIDENCE_REQUIRED,
                 "recheck_method": DEFAULT_RECHECK_METHOD}),
     _ABNORMAL_FALLBACK_RULE,
 ]
 
+# --- Mechanism binding (机理层绑定,集中映射便于评审) ---------------------------
+# 每条规则指向 ontology 里最接近的主机理;趋势形态规则不绑定(趋势本身不足以
+# 锁定机理,只作为证据输入决策层)。
+RULE_MECHANISMS = {
+    "rule.spi_false_alarm_review": "mech.spi_false_call",
+    "rule.parameter_recovery": "mech.parameter_mismatch",
+    "rule.periodic_maintenance_cycle": "mech.cleaning_cycle_mismatch",
+    "rule.parameter_drift": "mech.parameter_mismatch",
+    "rule.fallback_local_printing_state": "mech.undetermined",
+    # scope 规则
+    "rule.over_volume_single_pad": "mech.understencil_residue",
+    "rule.insufficient_volume_single_pad": "mech.aperture_clogging",
+    "rule.over_volume_component_multi_pad": "mech.understencil_residue",
+    "rule.insufficient_volume_component_multi_pad": "mech.aperture_clogging",
+    "rule.over_volume_local_area": "mech.poor_gasketing",
+    "rule.insufficient_volume_local_area": "mech.aperture_clogging",
+    "rule.over_volume_board_same_direction": "mech.paste_rheology_drift",
+    "rule.insufficient_volume_board_same_direction": "mech.supply_interruption",
+    # 工艺复核项
+    "rule.review_print_alignment_offset": "mech.alignment_offset",
+    "rule.review_gasketing_board_support": "mech.poor_gasketing",
+    "rule.review_stencil_cleaning_process": "mech.cleaning_cycle_mismatch",
+    "rule.review_stencil_aperture_design": "mech.poor_release",
+    # 事件候选
+    "rule.event_over_volume_local_paste_state": "mech.paste_rheology_drift",
+    "rule.event_over_volume_local_stencil_residue": "mech.understencil_residue",
+    "rule.event_over_volume_local_spi_threshold": "mech.spi_false_call",
+    "rule.event_over_volume_board_paste_viscosity": "mech.paste_rheology_drift",
+    "rule.event_over_volume_board_squeegee_pressure": "mech.parameter_mismatch",
+    "rule.event_over_volume_board_spi_threshold": "mech.spi_false_call",
+    "rule.event_insufficient_volume_local_stencil_blockage": "mech.aperture_clogging",
+    "rule.event_insufficient_volume_local_paste_dry": "mech.paste_rheology_drift",
+    "rule.event_insufficient_volume_local_support": "mech.poor_gasketing",
+    "rule.event_insufficient_volume_board_supply_interruption": "mech.supply_interruption",
+    "rule.event_insufficient_volume_board_stencil_blockage": "mech.aperture_clogging",
+    "rule.event_insufficient_volume_board_print_action": "mech.supply_interruption",
+    # 实时候选
+    "rule.abnormal_insufficient_repeat_stencil_blockage": "mech.aperture_clogging",
+    "rule.abnormal_insufficient_repeat_paste_dry": "mech.paste_rheology_drift",
+    "rule.abnormal_insufficient_repeat_support": "mech.poor_gasketing",
+    "rule.abnormal_insufficient_component_support": "mech.poor_gasketing",
+    "rule.abnormal_insufficient_component_stencil_blockage": "mech.aperture_clogging",
+    "rule.abnormal_insufficient_component_contact": "mech.poor_gasketing",
+    "rule.abnormal_insufficient_board_squeegee_pressure": "mech.parameter_mismatch",
+    "rule.abnormal_insufficient_board_print_speed": "mech.parameter_mismatch",
+    "rule.abnormal_insufficient_board_paste_state": "mech.paste_rheology_drift",
+    "rule.abnormal_insufficient_board_stencil_cleaning": "mech.cleaning_cycle_mismatch",
+    "rule.abnormal_insufficient_board_squeegee_pressure_high": "mech.parameter_mismatch",
+    "rule.abnormal_insufficient_board_paste_state_high": "mech.paste_rheology_drift",
+    "rule.abnormal_over_repeat_stencil_residue": "mech.understencil_residue",
+    "rule.abnormal_over_repeat_aperture": "mech.poor_release",
+    "rule.abnormal_over_repeat_release": "mech.poor_release",
+    "rule.abnormal_over_component_stencil_residue": "mech.understencil_residue",
+    "rule.abnormal_over_component_slump": "mech.slump",
+    "rule.abnormal_over_component_release": "mech.poor_release",
+    "rule.abnormal_over_board_squeegee_pressure": "mech.parameter_mismatch",
+    "rule.abnormal_over_board_print_speed": "mech.parameter_mismatch",
+    "rule.abnormal_over_board_paste_viscosity": "mech.paste_rheology_drift",
+    "rule.abnormal_over_board_spi_threshold": "mech.spi_false_call",
+    "rule.abnormal_over_board_spi_threshold_high": "mech.spi_false_call",
+    "rule.abnormal_over_board_squeegee_pressure_high": "mech.parameter_mismatch",
+    "rule.abnormal_observe_next_board": "mech.undetermined",
+}
+
+# 明确不绑定机理的规则(趋势形态只是证据,不足以锁定机理)。
+RULES_WITHOUT_MECHANISM = {"rule.trend_gradual_degradation", "rule.trend_step_change"}
+
+for _rule in RULES:
+    _rule["mechanism"] = RULE_MECHANISMS.get(_rule["id"])
+
 _RULES_BY_ID = {rule["id"]: rule for rule in RULES}
 assert len(_RULES_BY_ID) == len(RULES), "duplicate rule id in RULES registry"
+assert all(
+    rule["mechanism"] or rule["id"] in RULES_WITHOUT_MECHANISM for rule in RULES
+), "every rule needs a mechanism or an explicit exemption"
 
 
 def _index_by(rule_type: str, *keys: str) -> dict[tuple, list[dict[str, Any]]]:
@@ -635,41 +716,145 @@ def rule_by_id(rule_id: str) -> dict[str, Any] | None:
     return _RULES_BY_ID.get(rule_id)
 
 
+def confidence_level(confidence: float) -> str:
+    """高/中/低 by final confidence — the single strength scale (v2 had a
+    parallel hand-set evidence_level; it is now derived, never stored)."""
+    if confidence >= 0.75:
+        return "高"
+    if confidence >= 0.5:
+        return "中"
+    return "低"
+
+
+# Auto-check evaluators: how each auto evidence type is verified against one
+# drilldown observation. Keys are ontology evidence IDs; each returns
+# (passed, detail). Evidence whose availability is planned/not_collected never
+# reaches these — it is reported as such instead of silently skipped.
+_AUTO_CHECK_EVALUATORS = {
+    "evidence.trend_slope": lambda obs: (
+        obs.get("trend_kind") == "gradual", obs.get("trend_detail", ""),
+    ),
+    "evidence.parameter_drift": lambda obs: (
+        bool(obs.get("drifted_parameters")),
+        "偏离参数：" + "、".join(obs.get("drifted_parameters", [])) if obs.get("drifted_parameters") else "窗口内未检出参数偏离基线。",
+    ),
+    "evidence.recovery": lambda obs: (
+        obs.get("recovery_kind") == "recovered" and bool(obs.get("recovery_parameters")),
+        obs.get("recovery_detail", ""),
+    ),
+    "evidence.periodic_recurrence": lambda obs: (
+        bool(obs.get("periodic")), obs.get("periodicity_detail", ""),
+    ),
+    "evidence.spi_metric_mismatch": lambda obs: (
+        obs.get("validity") == "validity.spi_suspect", obs.get("spi_detail", ""),
+    ),
+}
+
+_AVAILABILITY_STATUS = {
+    "not_collected": ("数据未采集", "该字段在当前数据导出中未采集，已列入数据侧需求。"),
+    "planned": ("待实现", "对应自动核验在第二阶段实现。"),
+}
+
+
+def evaluate_auto_checks(
+    evidence_ids: list[str],
+    observation: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Evaluate one mechanism's auto checks against a drilldown observation.
+    Statuses: 核验通过 / 未见 / 数据未采集 / 待实现."""
+    results = []
+    for evidence_id in evidence_ids:
+        availability = evidence_availability(evidence_id)
+        if availability in _AVAILABILITY_STATUS:
+            status, detail = _AVAILABILITY_STATUS[availability]
+        else:
+            evaluator = _AUTO_CHECK_EVALUATORS.get(evidence_id)
+            if evaluator is None:
+                continue
+            passed, detail = evaluator(observation)
+            status = "核验通过" if passed else "未见"
+        results.append({
+            "evidence_id": evidence_id,
+            "name": concept_label(evidence_id),
+            "status": status,
+            "detail": detail,
+        })
+    return results
+
+
 def root_cause_candidate_from_rule(
     rule: dict[str, Any],
     evidence: str | None = None,
+    multiplier: float = 1.0,
+    observation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Uniform root-cause candidate payload consumed by conclusions and UI."""
-    return {
+    """Uniform root-cause candidate payload consumed by conclusions and UI.
+
+    最终置信度 = 机理先验(confidence_base) × 证据乘数;evidence_level 由
+    最终置信度分档推导。带 observation 时评估机理的自动核验证据。"""
+    confidence = round(rule.get("confidence_base", 0.5) * multiplier, 3)
+    mechanism = mechanism_by_id(rule.get("mechanism") or "") or {}
+    props = mechanism.get("properties") or {}
+    manual_checks = [concept_label(item) for item in props.get("manual_checks", [])]
+    candidate = {
         "rule_id": rule["id"],
         "rule_source": rule["source"],
         "cause": rule["cause"],
         "evidence": evidence or rule.get("evidence", ""),
         "action": rule.get("action") or rule.get("action_template", ""),
-        "evidence_level": rule.get("evidence_level", "中"),
-        "evidence_required": rule.get("evidence_required", []),
         "confidence_base": rule.get("confidence_base", 0.5),
+        "confidence": confidence,
+        "evidence_level": confidence_level(confidence),
+        "mechanism_id": rule.get("mechanism"),
+        "mechanism": mechanism.get("label"),
+        "location": concept_label(props["element"]) if props.get("element") else None,
+        "onset": props.get("onset"),
+        "early_warning": props.get("early_warning") or None,
+        "manual_checks": manual_checks or rule.get("evidence_required", []),
     }
+    if observation is not None:
+        candidate["auto_checks"] = evaluate_auto_checks(
+            props.get("auto_checks", []), observation,
+        )
+    return candidate
 
 
-def scope_root_cause_candidate(direction: str, category: str, detail: str) -> dict[str, Any] | None:
+def scope_root_cause_candidate(
+    direction: str,
+    category: str,
+    detail: str,
+    observation: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     rules = _SCOPE_INDEX.get((direction, category))
     if not rules:
         return None
     rule = rules[0]
-    return root_cause_candidate_from_rule(rule, rule.get("evidence") or detail)
+    return root_cause_candidate_from_rule(
+        rule, rule.get("evidence") or detail, observation=observation,
+    )
 
 
-def trend_root_cause_candidate(kind: str, detail: str) -> dict[str, Any] | None:
+def trend_root_cause_candidate(
+    kind: str,
+    detail: str,
+    observation: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     rules = _TREND_INDEX.get((kind,))
     if not rules:
         return None
-    return root_cause_candidate_from_rule(rules[0], detail)
+    return root_cause_candidate_from_rule(rules[0], detail, observation=observation)
 
 
-def event_cause_candidates(direction: str, event_scope: str) -> list[dict[str, Any]]:
+def event_cause_candidates(
+    direction: str,
+    event_scope: str,
+    observation: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     return [
-        root_cause_candidate_from_rule(rule, "基于事件缺陷方向与影响范围的规则候选，当前无直接佐证。")
+        root_cause_candidate_from_rule(
+            rule, "基于事件缺陷方向与影响范围的规则候选，当前无直接佐证。",
+            observation=observation,
+        )
         for rule in _EVENT_INDEX.get((direction, event_scope), [])
     ]
 
@@ -684,6 +869,184 @@ def abnormal_cause_candidates(defect_type: str, pattern: str, risk_level: str) -
         root_cause_candidate_from_rule(rule, "基于实时异常类型、模式和风险等级的规则候选。")
         for rule in rules
     ]
+
+
+# --- Decision layer ------------------------------------------------------------
+# v2 时代 build_conclusion 里的隐式候选收集顺序,显式化为可评审的决策规则组。
+# order 越小越先求值;门槛类(有效性)在前,直接时序证据次之,先验类靠后。
+# 乘数(multiplier)是置信度模型的证据修正项,声明在规则里而不是散在代码中。
+
+def _decide_spi_gate(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    return [root_cause_candidate_from_rule(
+        SPI_FALSE_ALARM_ROOT_CAUSE, obs.get("spi_detail", ""), observation=obs,
+    )]
+
+
+def _decide_parameter_drift(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    names = "、".join(obs["drifted_parameters"][:3])
+    candidate = root_cause_candidate_from_rule(
+        PARAMETER_DRIFT_ROOT_CAUSE,
+        PARAMETER_DRIFT_ROOT_CAUSE["evidence_template"].format(parameters=names),
+        multiplier=0.8 if obs.get("cross_model_baseline") else 1.0,
+        observation=obs,
+    )
+    candidate["action"] = PARAMETER_DRIFT_ROOT_CAUSE["action_template"].format(parameters=names)
+    return [candidate]
+
+
+def _decide_parameter_recovery(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    names = "、".join(sorted(set(obs["recovery_parameters"])))
+    candidate = root_cause_candidate_from_rule(
+        PARAMETER_RECOVERY_ROOT_CAUSE,
+        PARAMETER_RECOVERY_ROOT_CAUSE["evidence_template"].format(parameters=names),
+        observation=obs,
+    )
+    candidate["action"] = PARAMETER_RECOVERY_ROOT_CAUSE["action_template"].format(parameters=names)
+    return [candidate]
+
+
+def _decide_periodic(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    gap = obs.get("periodic_gap")
+    evidence = (
+        PERIODIC_ROOT_CAUSE["evidence_template"].format(gap=gap)
+        if gap else obs.get("periodicity_detail", "")
+    )
+    return [root_cause_candidate_from_rule(PERIODIC_ROOT_CAUSE, evidence, observation=obs)]
+
+
+def _decide_scope_prior(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    candidate = scope_root_cause_candidate(
+        obs["direction"], obs["category"], obs.get("scope_detail", ""), observation=obs,
+    )
+    return [candidate] if candidate else []
+
+
+def _decide_trend_shape(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    candidate = trend_root_cause_candidate(
+        obs.get("trend_kind", ""), obs.get("trend_detail", ""), observation=obs,
+    )
+    return [candidate] if candidate else []
+
+
+def _decide_event_candidates(obs: dict[str, Any]) -> list[dict[str, Any]]:
+    return event_cause_candidates(
+        obs["direction"], event_scope_for_category(obs["category"]), observation=obs,
+    )
+
+
+DECISION_RULES = [
+    {
+        "id": "decide.spi_false_alarm_gate",
+        "order": 10,
+        "when": "数据有效性 = 疑似SPI误判",
+        "nominates": "rule.spi_false_alarm_review（先排除假异常再谈物理机理）",
+        "applies": lambda obs: obs.get("validity") == "validity.spi_suspect",
+        "build": _decide_spi_gate,
+    },
+    {
+        "id": "decide.parameter_recovery",
+        "order": 20,
+        "when": "触发后恢复且恢复前有程序设定变更",
+        "nominates": "rule.parameter_recovery（时序证据直接支持）",
+        "applies": lambda obs: (
+            obs.get("recovery_kind") == "recovered" and bool(obs.get("recovery_parameters"))
+        ),
+        "build": _decide_parameter_recovery,
+    },
+    {
+        "id": "decide.parameter_drift",
+        "order": 21,
+        "when": "触发板参数实际-计划偏差超出基线",
+        "nominates": "rule.parameter_drift（跨机种基线时置信 ×0.8）",
+        "applies": lambda obs: bool(obs.get("drifted_parameters")),
+        "build": _decide_parameter_drift,
+    },
+    {
+        "id": "decide.periodic_recurrence",
+        "order": 30,
+        "when": "NG 连段呈固定节拍复发",
+        "nominates": "rule.periodic_maintenance_cycle",
+        "applies": lambda obs: bool(obs.get("periodic")),
+        "build": _decide_periodic,
+    },
+    {
+        "id": "decide.scope_prior",
+        "order": 50,
+        "when": "空间范围与缺陷方向组合(疑似SPI误判时跳过)",
+        "nominates": "scope_root_cause 规则组",
+        "applies": lambda obs: obs.get("validity") != "validity.spi_suspect",
+        "build": _decide_scope_prior,
+    },
+    {
+        "id": "decide.trend_shape",
+        "order": 60,
+        "when": "趋势形态可判(突变且已有参数漂移证据时跳过,避免重复归因)",
+        "nominates": "trend_root_cause 规则组(不绑定机理,仅形态归因)",
+        "applies": lambda obs: (
+            obs.get("trend_kind") in {"gradual", "step"}
+            and not (obs.get("trend_kind") == "step" and obs.get("drifted_parameters"))
+        ),
+        "build": _decide_trend_shape,
+    },
+    {
+        "id": "decide.event_candidates",
+        "order": 70,
+        "when": "按方向与事件分组轴补充候选(无直接佐证)",
+        "nominates": "event_cause 规则组",
+        "applies": lambda obs: True,
+        "build": _decide_event_candidates,
+    },
+]
+
+
+def diagnose(observation: dict[str, Any]) -> dict[str, Any]:
+    """Run the decision-rule ladder over one drilldown observation.
+
+    Returns the ranked root-cause assessment: candidates sorted by final
+    confidence (stable within ties), deduplicated by cause, capped at 3,
+    with ontology IDs attached and an overall confidence grade."""
+    candidates: list[dict[str, Any]] = []
+    for decision_rule in sorted(DECISION_RULES, key=lambda item: item["order"]):
+        if decision_rule["applies"](observation):
+            for candidate in decision_rule["build"](observation):
+                candidate["decided_by"] = decision_rule["id"]
+                candidates.append(candidate)
+
+    if not candidates:
+        fallback = root_cause_candidate_from_rule(FALLBACK_ROOT_CAUSE, observation=observation)
+        fallback["decided_by"] = "decide.fallback"
+        candidates.append(fallback)
+
+    candidates.sort(key=lambda item: -item["confidence"])
+    assessments: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate["cause"] in {item["cause"] for item in assessments}:
+            continue
+        assessments.append(candidate)
+        if len(assessments) >= 3:
+            break
+
+    for priority, item in enumerate(assessments, 1):
+        item["priority"] = priority
+        item["ontology_ids"] = ontology_ids_for(
+            direction=observation.get("direction"),
+            scope=observation.get("category"),
+            cause=item["cause"],
+        )
+
+    confidence = "中"
+    if observation.get("data_status") != "pass":
+        confidence = "低"
+    elif assessments[0]["evidence_level"] == "高":
+        confidence = "高"
+
+    return {
+        "category": observation.get("category"),
+        "direction": observation.get("direction"),
+        "confidence": confidence,
+        "root_cause_assessment": assessments,
+        "recheck_plan": RECHECK_CRITERIA,
+    }
 
 
 def disposition_for(
@@ -707,15 +1070,19 @@ def disposition_for(
 
 
 def rule_catalog() -> dict[str, Any]:
-    """Reviewable catalog of every executable rule. Optional review-card
+    """Reviewable catalog of every executable rule, the mechanism it points
+    to, and the decision ladder that combines them. Optional review-card
     fields (applies_when/...) appear only where an expert wrote them."""
     entries = []
     for rule in RULES:
+        mechanism = mechanism_by_id(rule.get("mechanism") or "") or {}
         output = {
             "cause": rule.get("cause"),
+            "mechanism_id": rule.get("mechanism"),
+            "mechanism": mechanism.get("label"),
             "evidence": rule.get("evidence") or rule.get("evidence_template"),
             "action": rule.get("action") or rule.get("action_template"),
-            "evidence_level": rule.get("evidence_level"),
+            "evidence_level": confidence_level(rule.get("confidence_base", 0.5)),
             "evidence_required": rule.get("evidence_required", []),
             "confidence_base": rule.get("confidence_base", 0.5),
         }
@@ -729,6 +1096,17 @@ def rule_catalog() -> dict[str, Any]:
             "condition": rule["condition"],
             "output": output,
         })
+    for decision_rule in sorted(DECISION_RULES, key=lambda item: item["order"]):
+        entries.append({
+            "rule_id": decision_rule["id"],
+            "rule_type": "decision",
+            "source": "knowledge_base.decision_rules",
+            "priority": f"order {decision_rule['order']}",
+            "condition": {"when": decision_rule["when"]},
+            "output": {
+                "action": decision_rule["nominates"],
+            },
+        })
     for rule in DISPOSITION_RULES:
         entries.append({
             "rule_id": f"disposition.{rule['id']}",
@@ -740,11 +1118,10 @@ def rule_catalog() -> dict[str, Any]:
                 "disposition": rule["disposition"],
                 "reason": rule["reason"],
                 "evidence_required": ["数据连续性", "SPI 复核状态", "恢复状态", "根因候选置信度"],
-                "confidence_base": 0.5,
             },
         })
     return {
-        "version": "rule-catalog-v4",
+        "version": "rule-catalog-v5",
         "focus": "锡膏印刷 + SPI 多锡/少锡异常管理",
         "rule_count": len(entries),
         "rules": entries,

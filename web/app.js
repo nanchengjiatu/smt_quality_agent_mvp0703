@@ -876,6 +876,7 @@ function renderRuleRow(rule) {
     .join("；");
   const outputLines = [
     output.cause ? `根因：${output.cause}` : "",
+    output.mechanism ? `机理：${output.mechanism}（${output.mechanism_id || ""}）` : "",
     output.disposition ? `处置：${output.disposition}` : "",
     output.evidence ? `证据：${output.evidence}` : "",
     output.action ? `动作：${output.action}` : "",
@@ -913,6 +914,7 @@ function ruleTypeLabel(type) {
     process_review: "工艺复核",
     event_cause: "事件根因",
     abnormal_cause: "实时异常根因",
+    decision: "诊断决策",
     disposition: "处置策略",
   };
   return labels[type] || type || "-";

@@ -77,6 +77,16 @@ class Abnormal:
         }
 
 
+# 实时模式 → 三轴中的空间×时间(ID 来自 ontology 的 SpatialExtent /
+# TemporalPattern;数据有效性判断是下钻层的能力,实时口径不给出)。
+PATTERN_AXES = {
+    "同点多板异常": ("spatial.single_pad", "temporal.repeated"),
+    "整板趋势异常": ("spatial.board_wide", "temporal.sporadic"),
+    "同元件多Pad异常": ("spatial.component_multi_pad", "temporal.sporadic"),
+    "单点偶发异常": ("spatial.single_pad", "temporal.sporadic"),
+}
+
+
 def run_agent(
     spi_rows: list[dict[str, Any]],
     total_pad_count_by_board: dict[str, int] | None = None,
@@ -101,7 +111,14 @@ def run_agent(
         abnormal.suggested_action = [item["action"] for item in causes]
         abnormal.create_quality_case = risk_level in {"中", "高"}
 
-    return [item.to_dict() for item in abnormals]
+    results = []
+    for item in abnormals:
+        payload = item.to_dict()
+        spatial, temporal = PATTERN_AXES.get(item.abnormal_pattern, (None, None))
+        payload["spatial"] = spatial
+        payload["temporal"] = temporal
+        results.append(payload)
+    return results
 
 
 def build_quality_cases(abnormal_results: list[dict[str, Any]]) -> list[dict[str, Any]]:

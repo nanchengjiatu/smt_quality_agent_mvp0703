@@ -366,8 +366,49 @@ class ScopeTest(unittest.TestCase):
 
     def test_candidates_are_ranked_by_confidence(self) -> None:
         contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
-        confidences = [item["confidence_base"] for item in contract["root_cause_candidates"]]
+        confidences = [item["confidence"] for item in contract["root_cause_candidates"]]
         self.assertEqual(confidences, sorted(confidences, reverse=True))
+
+    def test_axes_are_orthogonal_and_populated(self) -> None:
+        # 单Pad + 连续 + 数据可信
+        contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
+        self.assertEqual(contract["scope"]["spatial"], "spatial.single_pad")
+        self.assertEqual(contract["scope"]["temporal"], "temporal.consecutive")
+        self.assertEqual(contract["scope"]["validity"], "validity.valid")
+
+    def test_spi_suspect_keeps_physical_spatial_axis(self) -> None:
+        # SPI 假异常是有效性判断,不再覆盖空间范围轴。
+        specs = trigger_specs(10, 3, 2)
+        for spec in specs[10:13]:
+            spec["avdp"] = 12.0
+        contract = first_contract(make_boards(specs))
+        self.assertEqual(contract["scope"]["validity"], "validity.spi_suspect")
+        self.assertEqual(contract["scope"]["category"], "疑似SPI假异常")
+        self.assertTrue(contract["scope"]["spatial"].startswith("spatial."))
+
+    def test_periodic_trigger_refines_temporal_axis(self) -> None:
+        specs = []
+        for _ in range(3):
+            specs += [{"avdp": 12.0} for _ in range(10)]
+            specs += [{"err": "Over Volume", "avdp": 80.0} for _ in range(3)]
+        contract = first_contract(make_boards(specs))
+        self.assertEqual(contract["scope"]["temporal"], "temporal.periodic")
+
+    def test_candidates_carry_mechanism_and_checks(self) -> None:
+        contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
+        primary = contract["root_cause_candidates"][0]
+        self.assertEqual(primary["mechanism_id"], "mech.understencil_residue")
+        self.assertEqual(primary["location"], "钢网底面")
+        self.assertTrue(primary["manual_checks"])
+        self.assertTrue(primary["decided_by"].startswith("decide."))
+        statuses = {check["status"] for check in primary["auto_checks"]}
+        self.assertTrue(statuses <= {"核验通过", "未见", "数据未采集", "待实现"})
+        # 未采集的证据必须如实标注,不允许伪装成已核验。
+        cleaning = next(
+            check for check in primary["auto_checks"]
+            if check["evidence_id"] == "evidence.cleaning_marker"
+        )
+        self.assertEqual(cleaning["status"], "数据未采集")
 
 
 class PeriodicityTest(unittest.TestCase):
@@ -429,7 +470,7 @@ class ReportShapeTest(unittest.TestCase):
         report = build_drilldown_report(make_boards(trigger_specs(10, 3, 5)))
         contract = report["triggers"][0]["analysis_contract"]
 
-        self.assertEqual(contract["version"], "analysis-contract-v2")
+        self.assertEqual(contract["version"], "analysis-contract-v3")
         self.assertEqual(
             set(contract),
             {
@@ -452,6 +493,9 @@ class ReportShapeTest(unittest.TestCase):
             {"单Pad孤立异常", "同元件多Pad异常", "局部区域", "整板同向", "疑似SPI假异常"},
         )
         self.assertIn(contract["scope"]["confidence"], {"高", "中", "低"})
+        self.assertTrue(contract["scope"]["spatial"].startswith("spatial."))
+        self.assertTrue(contract["scope"]["temporal"].startswith("temporal."))
+        self.assertTrue(contract["scope"]["validity"].startswith("validity."))
         self.assertGreaterEqual(len(contract["evidence"]["summary"]), 5)
         self.assertEqual(
             [item["name"] for item in contract["evidence"]["exclusion_checks"]],

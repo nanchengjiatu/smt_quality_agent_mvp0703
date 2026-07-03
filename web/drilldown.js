@@ -45,6 +45,12 @@ function renderAgentOverview(trigger) {
             ${escapeHtml(contractScope.category || "待判定")}
             <span class="badge risk-${escapeHtml(contractScope.confidence || "中")}">置信度 ${escapeHtml(contractScope.confidence || "中")}</span>
           </div>
+          ${contractScope.spatial_label ? `
+          <div class="details">
+            空间：${escapeHtml(contractScope.spatial_label)} ·
+            时间：${escapeHtml(contractScope.temporal_label || "-")} ·
+            数据：${escapeHtml(contractScope.validity_label || "-")}
+          </div>` : ""}
         </div>
         <div class="dd-agent-source">
           全量 SPI 窗口 前 ${escapeHtml(fullWindow.actual_before ?? 0)}/${escapeHtml(fullWindow.requested_before ?? 500)}
@@ -324,9 +330,16 @@ function renderDrilldown() {
               ? rootCauseCandidates.map((item) => `
                 <li>
                   <strong>${item.priority}. ${escapeHtml(item.cause)}</strong>
-                  <span class="badge risk-${escapeHtml(item.evidence_level || "中")}">证据 ${escapeHtml(item.evidence_level || "中")}</span>
+                  <span class="badge risk-${escapeHtml(item.evidence_level || "中")}">置信 ${escapeHtml(item.confidence != null ? Math.round(item.confidence * 100) + "%" : item.evidence_level || "中")}</span>
+                  ${item.mechanism ? `<span class="details">机理：${escapeHtml(item.mechanism)}${item.location ? `（${escapeHtml(item.location)}）` : ""}</span>` : ""}
                   <span class="details">规则：${escapeHtml(item.rule_id || "rule.unspecified")}</span>
                   <span class="details"> — 依据：${escapeHtml(item.evidence || "待现场确认")}</span><br>
+                  ${(item.auto_checks || []).length ? `
+                  <span class="details">已核验：${(item.auto_checks || []).map((check) => `
+                    <span class="dd-mini-pill" title="${escapeHtml(check.detail || "")}">${escapeHtml(check.name)} ${escapeHtml(check.status)}</span>
+                  `).join("")}</span><br>` : ""}
+                  ${(item.manual_checks || []).length ? `<span class="details">待现场确认：${escapeHtml((item.manual_checks || []).join("、"))}</span><br>` : ""}
+                  ${item.early_warning ? `<span class="details">预警：${escapeHtml(item.early_warning)}</span><br>` : ""}
                   <span class="details">处置：${escapeHtml(item.action || "")}</span>
                 </li>
               `).join("")

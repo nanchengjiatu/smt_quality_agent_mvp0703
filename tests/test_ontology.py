@@ -12,12 +12,57 @@ from smt_quality_agent.ontology import (
 class OntologyTest(unittest.TestCase):
     def test_snapshot_exposes_core_concepts_and_relations(self) -> None:
         snapshot = ontology_snapshot()
-        self.assertEqual(snapshot["version"], "spi-printing-v2")
+        self.assertEqual(snapshot["version"], "spi-printing-v3")
         concept_ids = {item["id"] for item in snapshot["concepts"]}
         self.assertIn("process.solder_paste_printing", concept_ids)
         self.assertIn("inspection.spi", concept_ids)
         self.assertIn("scope.consecutive_same_pad", concept_ids)
         self.assertTrue(snapshot["relations"])
+
+    def test_v3_layers_are_present(self) -> None:
+        snapshot = ontology_snapshot()
+        by_type: dict[str, int] = {}
+        for item in snapshot["concepts"]:
+            by_type[item["type"]] = by_type.get(item["type"], 0) + 1
+        # 实体层骨架 + 三个正交轴 + 机理层
+        self.assertEqual(by_type["SpatialExtent"], 4)
+        self.assertEqual(by_type["TemporalPattern"], 4)
+        self.assertEqual(by_type["DataValidity"], 3)
+        self.assertEqual(by_type["ProcessStage"], 4)
+        self.assertGreaterEqual(by_type["EquipmentElement"], 7)
+        self.assertEqual(by_type["FailureMechanism"], 13)
+
+    def test_v2_scopes_are_deprecated_but_still_mapped(self) -> None:
+        snapshot = ontology_snapshot()
+        for item in snapshot["concepts"]:
+            if item["type"] == "AbnormalScope":
+                self.assertTrue(
+                    (item.get("properties") or {}).get("deprecated"),
+                    item["id"],
+                )
+
+    def test_mechanism_evidence_references_are_registered(self) -> None:
+        snapshot = ontology_snapshot()
+        evidence_ids = {
+            item["id"] for item in snapshot["concepts"]
+            if item["type"] == "EvidenceType"
+        }
+        element_ids = {
+            item["id"] for item in snapshot["concepts"]
+            if item["type"] in {"EquipmentElement", "Material"}
+        }
+        stage_ids = {
+            item["id"] for item in snapshot["concepts"]
+            if item["type"] == "ProcessStage"
+        }
+        for item in snapshot["concepts"]:
+            if item["type"] != "FailureMechanism":
+                continue
+            props = item["properties"]
+            self.assertIn(props["element"], element_ids, item["id"])
+            self.assertIn(props["stage"], stage_ids, item["id"])
+            for evidence_id in [*props["auto_checks"], *props["manual_checks"]]:
+                self.assertIn(evidence_id, evidence_ids, f"{item['id']} -> {evidence_id}")
 
     def test_every_scope_label_used_by_analyses_is_registered(self) -> None:
         # Drilldown categories.

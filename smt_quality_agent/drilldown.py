@@ -4,21 +4,8 @@ from datetime import datetime
 from typing import Any
 
 from smt_quality_agent.affected_model import split_component_pad
-from smt_quality_agent.knowledge_base import (
-    FALLBACK_ROOT_CAUSE,
-    PARAMETER_DRIFT_ROOT_CAUSE,
-    PARAMETER_RECOVERY_ROOT_CAUSE,
-    PERIODIC_ROOT_CAUSE,
-    RECHECK_CRITERIA,
-    SPI_FALSE_ALARM_ROOT_CAUSE,
-    disposition_for,
-    event_cause_candidates,
-    event_scope_for_category,
-    root_cause_candidate_from_rule,
-    scope_root_cause_candidate,
-    trend_root_cause_candidate,
-)
-from smt_quality_agent.ontology import ontology_ids_for
+from smt_quality_agent.knowledge_base import diagnose, disposition_for
+from smt_quality_agent.ontology import concept_label, ontology_ids_for
 from smt_quality_agent.param_correlation import (
     BOARD_WIDE_MIN_BOARD_ROWS,
     BOARD_WIDE_NG_SHARE,
@@ -745,29 +732,60 @@ def classify_scope(
     scope: dict[str, Any],
     context_summary: dict[str, Any],
     exclusions: dict[str, Any],
+    periodicity: dict[str, Any],
 ) -> dict[str, Any]:
+    """Classify one trigger on the three orthogonal axes (空间范围 × 时间模式 ×
+    数据有效性), plus the combined display category (v2 labels, UI 兼容)."""
     local_area = context_summary.get("local_area") or {}
+
+    # 轴 1：空间范围 —— 纯物理扩散判断,不再被 SPI 有效性判断覆盖。
+    if scope["kind"] == "board":
+        spatial = "spatial.board_wide"
+        spatial_detail = scope["detail"]
+    elif scope["kind"] == "component":
+        spatial = "spatial.component_multi_pad"
+        spatial_detail = scope["detail"]
+    elif local_area.get("detected"):
+        spatial = "spatial.local_area"
+        spatial_detail = local_area["detail"]
+    elif context_summary["ng_rate"] >= BOARD_WIDE_NG_SHARE:
+        spatial = "spatial.board_wide"
+        spatial_detail = "前后全量 SPI 窗口 NG 占比较高，需要检查同线体/同设备的整体制程波动。"
+    else:
+        spatial = "spatial.single_pad"
+        spatial_detail = "同元件和全量窗口没有显示明显扩散，优先锁定触发 Pad 的局部原因。"
+
+    # 轴 2：时间模式 —— 下钻触发本身是严格连续,周期性复发时细化。
+    temporal = "temporal.periodic" if periodicity.get("periodic") else "temporal.consecutive"
+
+    # 轴 3：数据有效性。
     if (exclusions.get("spi_false_alarm") or {}).get("status") == "suspect":
+        validity = "validity.spi_suspect"
+    elif (exclusions.get("data_continuity") or {}).get("status") != "pass":
+        validity = "validity.data_suspect"
+    else:
+        validity = "validity.valid"
+
+    # 组合显示标签：沿用 v2 词表,UI 与规则条件兼容。
+    if validity == "validity.spi_suspect":
         category = "疑似SPI假异常"
         detail = "触发记录的缺陷标签与关键度量值不一致，需优先复核 SPI 程序、识别框和阈值。"
-    elif scope["kind"] == "board":
-        category = "整板同向"
-        detail = scope["detail"]
-    elif scope["kind"] == "component":
-        category = "同元件多Pad异常"
-        detail = scope["detail"]
-    elif local_area.get("detected"):
-        category = "局部区域"
-        detail = local_area["detail"]
-    elif context_summary["ng_rate"] >= BOARD_WIDE_NG_SHARE:
-        category = "整板同向"
-        detail = "前后全量 SPI 窗口 NG 占比较高，需要检查同线体/同设备的整体制程波动。"
     else:
-        category = "单Pad孤立异常"
-        detail = "同元件和全量窗口没有显示明显扩散，优先锁定触发 Pad 的局部原因。"
+        category = {
+            "spatial.board_wide": "整板同向",
+            "spatial.component_multi_pad": "同元件多Pad异常",
+            "spatial.local_area": "局部区域",
+            "spatial.single_pad": "单Pad孤立异常",
+        }[spatial]
+        detail = spatial_detail
+
     return {
         "category": category,
         "detail": detail,
+        "spatial": spatial,
+        "spatial_detail": spatial_detail,
+        "temporal": temporal,
+        "validity": validity,
     }
 
 
@@ -823,101 +841,41 @@ def build_exclusion_checks(
     }
 
 
-def build_conclusion(
+def build_observation(
     direction: str,
     scope_classification: dict[str, Any],
     change_type: dict[str, Any],
     recovery: dict[str, Any],
     periodicity: dict[str, Any],
     parameter_check: dict[str, Any],
-    cause_candidates: list[dict[str, Any]],
     exclusions: dict[str, Any],
 ) -> dict[str, Any]:
-    """Collect root-cause candidates from the rule registry and rank them by
-    confidence_base — the knowledge base's explicit confidence ladder — instead
-    of an implicit insertion order."""
-    candidates: list[dict[str, Any]] = []
-
-    if exclusions["spi_false_alarm"]["status"] == "suspect":
-        candidates.append(root_cause_candidate_from_rule(
-            SPI_FALSE_ALARM_ROOT_CAUSE,
-            exclusions["spi_false_alarm"]["detail"],
-        ))
-
-    drifted = parameter_check.get("drifted") or []
-    if drifted:
-        names = "、".join(item["parameter"] for item in drifted[:3])
-        drift = root_cause_candidate_from_rule(
-            PARAMETER_DRIFT_ROOT_CAUSE,
-            PARAMETER_DRIFT_ROOT_CAUSE["evidence_template"].format(parameters=names),
-        )
-        drift["action"] = PARAMETER_DRIFT_ROOT_CAUSE["action_template"].format(parameters=names)
-        drift["evidence_level"] = "高" if not parameter_check.get("cross_model_baseline") else "中"
-        candidates.append(drift)
-
-    related = recovery.get("related_param_events") or []
-    if recovery["kind"] == "recovered" and related:
-        names = "、".join(sorted({item["parameter"] for item in related}))
-        recovered = root_cause_candidate_from_rule(
-            PARAMETER_RECOVERY_ROOT_CAUSE,
-            PARAMETER_RECOVERY_ROOT_CAUSE["evidence_template"].format(parameters=names),
-        )
-        recovered["action"] = PARAMETER_RECOVERY_ROOT_CAUSE["action_template"].format(parameters=names)
-        candidates.append(recovered)
-
-    if periodicity.get("periodic"):
-        gap = periodicity.get("mean_gap_boards")
-        evidence = (
-            PERIODIC_ROOT_CAUSE["evidence_template"].format(gap=gap)
-            if gap else periodicity["detail"]
-        )
-        candidates.append(root_cause_candidate_from_rule(PERIODIC_ROOT_CAUSE, evidence))
-
-    category = scope_classification["category"]
-    if category != "疑似SPI假异常":
-        category_rule = scope_root_cause_candidate(
-            direction, category, scope_classification["detail"],
-        )
-        if category_rule:
-            candidates.append(category_rule)
-
-    trend_rule = trend_root_cause_candidate(change_type["kind"], change_type["detail"])
-    if trend_rule and (change_type["kind"] != "step" or not drifted):
-        candidates.append(trend_rule)
-
-    candidates.extend(cause_candidates)
-    if not candidates:
-        candidates.append(root_cause_candidate_from_rule(FALLBACK_ROOT_CAUSE))
-
-    # Stable sort keeps collection order between equal weights; duplicate
-    # causes keep their strongest entry.
-    candidates.sort(key=lambda item: -item["confidence_base"])
-    assessments: list[dict[str, Any]] = []
-    for candidate in candidates:
-        if candidate["cause"] in {item["cause"] for item in assessments}:
-            continue
-        assessments.append(candidate)
-        if len(assessments) >= 3:
-            break
-
-    for priority, item in enumerate(assessments, 1):
-        item["priority"] = priority
-        item["ontology_ids"] = ontology_ids_for(
-            direction=direction, scope=category, cause=item["cause"],
-        )
-
-    confidence = "中"
-    if exclusions["data_continuity"]["status"] != "pass":
-        confidence = "低"
-    elif assessments[0]["evidence_level"] == "高":
-        confidence = "高"
-
+    """Normalize one trigger's analysis results into the observation dict the
+    knowledge-base decision layer (``knowledge_base.diagnose``) consumes. All
+    combination logic — what to suspect first under which evidence — lives in
+    the knowledge base, not here."""
+    related_events = recovery.get("related_param_events") or []
     return {
-        "category": category,
         "direction": direction,
-        "confidence": confidence,
-        "root_cause_assessment": assessments,
-        "recheck_plan": RECHECK_CRITERIA,
+        "category": scope_classification["category"],
+        "spatial": scope_classification["spatial"],
+        "temporal": scope_classification["temporal"],
+        "validity": scope_classification["validity"],
+        "scope_detail": scope_classification["detail"],
+        "trend_kind": change_type["kind"],
+        "trend_detail": change_type["detail"],
+        "drifted_parameters": [
+            item["parameter"] for item in (parameter_check.get("drifted") or [])
+        ],
+        "cross_model_baseline": bool(parameter_check.get("cross_model_baseline")),
+        "recovery_kind": recovery["kind"],
+        "recovery_parameters": [event["parameter"] for event in related_events],
+        "recovery_detail": recovery["detail"],
+        "periodic": bool(periodicity.get("periodic")),
+        "periodic_gap": periodicity.get("mean_gap_boards"),
+        "periodicity_detail": periodicity.get("detail", ""),
+        "spi_detail": (exclusions.get("spi_false_alarm") or {}).get("detail", ""),
+        "data_status": (exclusions.get("data_continuity") or {}).get("status"),
     }
 
 
@@ -1015,7 +973,7 @@ def build_analysis_contract(
         evidence_tags.append("数据需复核")
 
     return {
-        "version": "analysis-contract-v2",
+        "version": "analysis-contract-v3",
         "trigger": {
             "trigger_id": trigger_id,
             "agent_type": "consecutive_pad_root_cause",
@@ -1040,6 +998,12 @@ def build_analysis_contract(
         "scope": {
             "category": category,
             "detail": scope_classification["detail"],
+            "spatial": scope_classification["spatial"],
+            "spatial_label": concept_label(scope_classification["spatial"]),
+            "temporal": scope_classification["temporal"],
+            "temporal_label": concept_label(scope_classification["temporal"]),
+            "validity": scope_classification["validity"],
+            "validity_label": concept_label(scope_classification["validity"]),
             "confidence": confidence,
             "ontology_ids": ontology_ids_for(direction=direction, scope=category),
         },
@@ -1178,14 +1142,14 @@ def build_trigger_package(
     exclusion_checks = build_exclusion_checks(
         trigger_points_raw, change_type, recovery, full_spi_window, metric_field,
     )
-    scope_classification = classify_scope(scope, context_summary, exclusion_checks)
-    cause_candidates = event_cause_candidates(
-        direction, event_scope_for_category(scope_classification["category"]),
+    scope_classification = classify_scope(
+        scope, context_summary, exclusion_checks, periodicity,
     )
-    conclusion = build_conclusion(
+    observation = build_observation(
         direction, scope_classification, change_type, recovery, periodicity,
-        parameter_check, cause_candidates, exclusion_checks,
+        parameter_check, exclusion_checks,
     )
+    conclusion = diagnose(observation)
     analysis_contract = build_analysis_contract(
         trigger_id=trigger_id,
         model=model,

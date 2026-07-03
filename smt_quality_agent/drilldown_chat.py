@@ -115,11 +115,22 @@ def _answer_evidence(trigger: dict[str, Any]) -> dict[str, str]:
         f"{item.get('name')}：{item.get('value')}，{item.get('detail')}"
         for item in (contract.get("evidence") or {}).get("summary") or []
     ]
+    check_items = [
+        f"{check.get('name')}[{check.get('status')}]"
+        for check in primary.get("auto_checks") or []
+    ]
+    evidence_parts = [primary.get("evidence", ""), *summary_items[:3]]
+    if check_items:
+        evidence_parts.append("已自动核验：" + "、".join(check_items))
+    if primary.get("manual_checks"):
+        evidence_parts.append("待现场确认：" + "、".join(primary["manual_checks"][:4]))
     trigger_info = contract.get("trigger") or {}
+    conclusion = primary.get("cause") or trigger_info.get("conclusion", "当前事件已触发 Agent 根因分析。")
+    if primary.get("mechanism"):
+        conclusion = f"{conclusion}（机理：{primary['mechanism']}，部位：{primary.get('location') or '待定'}）"
     return {
-        "conclusion": primary.get("cause")
-        or trigger_info.get("conclusion", "当前事件已触发 Agent 根因分析。"),
-        "evidence": _join([primary.get("evidence", ""), *summary_items[:4]]),
+        "conclusion": conclusion,
+        "evidence": _join(evidence_parts),
         "next_step": primary.get("action") or _scope_next_step(trigger),
     }
 
