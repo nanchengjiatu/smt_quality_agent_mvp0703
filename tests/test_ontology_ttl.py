@@ -16,9 +16,13 @@ class OntologyTurtleTest(unittest.TestCase):
         ttl = to_turtle()
         self.assertIn("smt:verifiedBy smt:inspection.spi", ttl)
         self.assertIn("smt:observes smt:defect.over_volume", ttl)
-        self.assertIn("smt:requiresEvidence smt:evidence.full_spi_window", ttl)
         self.assertIn("smt:scope.suspected_spi_false_alarm", ttl)
-        self.assertIn("smt:hasCandidateCause smt:root_cause.spi_program_false_alarm", ttl)
+        # 机理→缺陷方向的生成边与机理属性边。
+        self.assertIn("smt:causesDefect smt:defect.insufficient_volume", ttl)
+        self.assertIn("smt:autoCheck smt:evidence.trend_slope", ttl)
+        self.assertIn("smt:canonicalAction", ttl)
+        # 废弃的 v3 根因措辞标注对应机理。
+        self.assertIn("smt:expressesMechanism smt:mech.spi_false_call", ttl)
 
 
 if __name__ == "__main__":

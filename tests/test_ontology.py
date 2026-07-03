@@ -12,12 +12,39 @@ from smt_quality_agent.ontology import (
 class OntologyTest(unittest.TestCase):
     def test_snapshot_exposes_core_concepts_and_relations(self) -> None:
         snapshot = ontology_snapshot()
-        self.assertEqual(snapshot["version"], "spi-printing-v3")
+        self.assertEqual(snapshot["version"], "spi-printing-v4")
         concept_ids = {item["id"] for item in snapshot["concepts"]}
         self.assertIn("process.solder_paste_printing", concept_ids)
         self.assertIn("inspection.spi", concept_ids)
         self.assertIn("scope.consecutive_same_pad", concept_ids)
         self.assertTrue(snapshot["relations"])
+
+    def test_mechanism_defect_relations_are_generated_from_direction(self) -> None:
+        # 机理→缺陷方向的边由 direction 属性生成,图与机理目录不会漂移。
+        snapshot = ontology_snapshot()
+        edges = {
+            (item["subject"], item["object"])
+            for item in snapshot["relations"]
+            if item["predicate"] == "causes_defect"
+        }
+        self.assertIn(("mech.aperture_clogging", "defect.insufficient_volume"), edges)
+        self.assertIn(("mech.understencil_residue", "defect.over_volume"), edges)
+        # 双向机理两条边都有。
+        self.assertIn(("mech.poor_gasketing", "defect.over_volume"), edges)
+        self.assertIn(("mech.poor_gasketing", "defect.insufficient_volume"), edges)
+
+    def test_deprecated_root_causes_point_to_their_mechanism(self) -> None:
+        snapshot = ontology_snapshot()
+        mechanisms = {
+            item["id"] for item in snapshot["concepts"]
+            if item["type"] == "FailureMechanism"
+        }
+        for item in snapshot["concepts"]:
+            if item["type"] != "RootCauseCandidate":
+                continue
+            props = item.get("properties") or {}
+            if props.get("deprecated"):
+                self.assertIn(props.get("mechanism"), mechanisms, item["id"])
 
     def test_v3_layers_are_present(self) -> None:
         snapshot = ontology_snapshot()
@@ -86,13 +113,19 @@ class OntologyTest(unittest.TestCase):
         )
 
     def test_maps_labels_to_stable_ids(self) -> None:
+        # 机理 label 是权威根因词表,映射到机理概念。
         ids = ontology_ids_for(
             direction="多锡",
             scope="单Pad孤立异常",
-            cause="钢网单孔底部残锡或开口异常",
+            cause="钢网底部残锡转印",
         )
         self.assertEqual(ids["direction"], "defect.over_volume")
         self.assertEqual(ids["scope"], "scope.single_pad_isolated")
+        self.assertEqual(ids["cause"], "mech.understencil_residue")
+
+    def test_legacy_cause_labels_still_resolve(self) -> None:
+        # 旧记录里的 v3 措辞仍能解析到废弃的 RootCauseCandidate 概念。
+        ids = ontology_ids_for(cause="钢网单孔底部残锡或开口异常")
         self.assertEqual(ids["cause"], "root_cause.stencil_single_aperture_residue")
 
     def test_spi_false_alarm_category_maps_to_scope_concept(self) -> None:

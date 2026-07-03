@@ -1042,7 +1042,7 @@ def build_analysis_contract(
         evidence_tags.append("数据需复核")
 
     return {
-        "version": "analysis-contract-v3",
+        "version": "analysis-contract-v4",
         "trigger": {
             "trigger_id": trigger_id,
             "agent_type": "consecutive_pad_root_cause",

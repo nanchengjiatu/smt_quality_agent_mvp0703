@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from smt_quality_agent.knowledge_base import abnormal_cause_candidates
+from smt_quality_agent.knowledge_base import PATTERN_AXES, abnormal_cause_candidates
 
 
 @dataclass(frozen=True)
@@ -75,16 +75,6 @@ class Abnormal:
             "status": self.status,
             "create_quality_case": self.create_quality_case,
         }
-
-
-# 实时模式 → 三轴中的空间×时间(ID 来自 ontology 的 SpatialExtent /
-# TemporalPattern;数据有效性判断是下钻层的能力,实时口径不给出)。
-PATTERN_AXES = {
-    "同点多板异常": ("spatial.single_pad", "temporal.repeated"),
-    "整板趋势异常": ("spatial.board_wide", "temporal.sporadic"),
-    "同元件多Pad异常": ("spatial.component_multi_pad", "temporal.sporadic"),
-    "单点偶发异常": ("spatial.single_pad", "temporal.sporadic"),
-}
 
 
 def run_agent(

@@ -7,6 +7,18 @@
 数据侧需求(CleaningAfterLastBoard/PrintDirection/温湿度/Pad级offset)待推进。
 前置:2026-07-03 知识治理重构(词表/规则单源化、analysis_contract v2,提交 c6cce58)
 
+**v4 收敛**(2026-07-03,ontology spi-printing-v4 / rule-catalog-v6 /
+analysis-contract-v4):机理层成为知识的主键——
+① 诊断候选按**机理**去重(v3 按 cause 字符串,同一机理的不同措辞会占掉
+前 3 的两席);② cause 显示文本 = 机理 label 单源(v3 有 44/59 条规则的
+cause 游离于词表外,同一机理最多 7 种说法),v2/v3 措辞概念标 deprecated
+并注 `mechanism` 供旧记录解析;③ 事件/实时候选由机理目录按
+(方向 × 空间范围) **投影生成**(删除 12+25 条手工格子规则),机理新增
+规范动作 action;④ typical_spatial 接入决策(空间典型性调整 ×1.1/×0.9),
+RELATIONS 手写业务边删除、机理→缺陷方向边由 direction 生成;⑤ 处置词表
+补全并与 DISPOSITION_RULES 绑定,ActionType 废弃。密合不良机理改为双向
+(渗锡多锡/接触不良少锡),开口堵塞典型范围补同元件多Pad(细间距)。
+
 ---
 
 ## 1. 为什么要有 v3

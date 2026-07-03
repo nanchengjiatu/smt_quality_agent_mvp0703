@@ -1,7 +1,11 @@
 import unittest
 
 from smt_quality_agent.knowledge_base import (
+    CAUSE_OVERRIDES,
     DECISION_RULES,
+    DISPOSITION_RULES,
+    PROJECTION_CANDIDATE_LIMIT,
+    PROJECTION_CONFIDENCE,
     RULES,
     RULES_WITHOUT_MECHANISM,
     abnormal_cause_candidates,
@@ -12,11 +16,18 @@ from smt_quality_agent.knowledge_base import (
     event_cause_candidates,
     event_scope_for_category,
     match_metric_signature,
+    project_mechanisms,
     rule_by_id,
     rule_catalog,
     scope_root_cause_candidate,
 )
-from smt_quality_agent.ontology import MECHANISMS, SCOPE_TO_CONCEPT_ID
+from smt_quality_agent.ontology import (
+    CAUSE_TO_CONCEPT_ID,
+    MECHANISMS,
+    SCOPE_TO_CONCEPT_ID,
+    concept_by_id,
+    concept_label,
+)
 
 
 def sample_observation(**overrides) -> dict:
@@ -72,11 +83,26 @@ class RuleRegistryTest(unittest.TestCase):
     def test_confidence_ladder_orders_direct_evidence_above_candidates(self) -> None:
         spi = rule_by_id("rule.spi_false_alarm_review")
         scope = rule_by_id("rule.over_volume_single_pad")
-        event = rule_by_id("rule.event_over_volume_local_stencil_residue")
         fallback = rule_by_id("rule.fallback_local_printing_state")
         self.assertGreater(spi["confidence_base"], scope["confidence_base"])
-        self.assertGreater(scope["confidence_base"], event["confidence_base"])
-        self.assertGreater(event["confidence_base"], fallback["confidence_base"])
+        self.assertGreater(scope["confidence_base"], PROJECTION_CONFIDENCE)
+        self.assertGreater(PROJECTION_CONFIDENCE, fallback["confidence_base"])
+
+    def test_every_cause_is_registered_vocabulary(self) -> None:
+        # cause 文本 = 机理 label(单源),必须能映射回本体;唯一例外是
+        # CAUSE_OVERRIDES 里"继续观察"这类兜底措辞。
+        for rule in RULES:
+            if rule["id"] == "rule.abnormal_observe_next_board":
+                continue
+            self.assertIn(rule["cause"], CAUSE_TO_CONCEPT_ID, rule["id"])
+
+    def test_hand_written_cause_only_on_exempted_fallbacks(self) -> None:
+        for rule in RULES:
+            if rule["id"] in CAUSE_OVERRIDES or rule["id"] in RULES_WITHOUT_MECHANISM:
+                continue
+            self.assertEqual(
+                rule["cause"], concept_label(rule["mechanism"]), rule["id"],
+            )
 
 
 class MechanismBindingTest(unittest.TestCase):
@@ -113,6 +139,7 @@ class DecisionLayerTest(unittest.TestCase):
         self.assertEqual(result["confidence"], "高")
 
     def test_cross_model_baseline_downgrades_drift_confidence(self) -> None:
+        # 0.75 × 0.8(跨机种) × 0.9(参数机理典型范围是整板/局部,观测是单Pad)。
         result = diagnose(sample_observation(
             drifted_parameters=["printspeed"], cross_model_baseline=True,
         ))
@@ -120,8 +147,24 @@ class DecisionLayerTest(unittest.TestCase):
             item for item in result["root_cause_assessment"]
             if item["rule_id"] == "rule.parameter_drift"
         )
-        self.assertEqual(drift["confidence"], 0.6)
+        self.assertEqual(drift["confidence"], 0.54)
         self.assertEqual(drift["evidence_level"], "中")
+
+    def test_diagnose_never_repeats_a_mechanism_in_top3(self) -> None:
+        # 原缺陷:去重按 cause 字符串,同一机理的不同措辞会占掉前 3 的两席。
+        result = diagnose(sample_observation(
+            trend_kind="gradual", recovery_kind="not_recovered",
+            metric_signature={"avdp": "up", "aadp": "up", "ahdp": "flat"},
+        ))
+        mechanisms = [
+            item["mechanism_id"] for item in result["root_cause_assessment"]
+            if item["mechanism_id"]
+        ]
+        self.assertEqual(len(mechanisms), len(set(mechanisms)))
+        dedup_reasons = [
+            item["reason"] for item in result["decision_trace"]["eliminated"]
+        ]
+        self.assertIn("同机理去重（保留更高置信候选）", dedup_reasons)
 
     def test_data_suspect_lowers_overall_confidence(self) -> None:
         result = diagnose(sample_observation(data_status="review"))
@@ -160,7 +203,8 @@ class DecisionTraceTest(unittest.TestCase):
             if step["id"] == "decide.parameter_drift"
         )
         self.assertIn("0.8(跨机种基线)", drift_step["nominated"][0]["formula"])
-        self.assertIn("= 0.6", drift_step["nominated"][0]["formula"])
+        self.assertIn("0.9(范围非典型)", drift_step["nominated"][0]["formula"])
+        self.assertIn("= 0.54", drift_step["nominated"][0]["formula"])
 
     def test_eliminated_candidates_carry_reasons(self) -> None:
         result = diagnose(sample_observation())
@@ -229,7 +273,8 @@ class CleaningAlignmentTest(unittest.TestCase):
             item for item in result["root_cause_assessment"]
             if item["rule_id"] == "rule.periodic_maintenance_cycle"
         )
-        self.assertEqual(periodic["confidence"], 0.92)
+        # 0.8 × 1.15(擦网对齐) × 1.1(单Pad在擦网机理典型范围) = 1.012 → 封顶。
+        self.assertEqual(periodic["confidence"], 0.95)
         reference = next(
             check for check in periodic["auto_checks"]
             if check["evidence_id"] == "evidence.cleaning_frequency_reference"
@@ -263,7 +308,8 @@ class LookupTest(unittest.TestCase):
         self.assertIsNotNone(candidate)
         self.assertEqual(candidate["rule_id"], "rule.over_volume_single_pad")
         self.assertEqual(candidate["rule_source"], "knowledge_base")
-        self.assertEqual(candidate["cause"], "钢网单孔底部残锡或开口异常")
+        # cause = 机理 label,不再是范围规则自己的措辞。
+        self.assertEqual(candidate["cause"], "钢网底部残锡转印")
         self.assertIn("单 Pad", candidate["evidence"])
         self.assertEqual(candidate["evidence_level"], "中")
 
@@ -276,35 +322,98 @@ class LookupTest(unittest.TestCase):
     def test_event_cause_candidates_carry_rule_identity(self) -> None:
         candidates = event_cause_candidates("少锡", "整板大面积")
         self.assertTrue(candidates)
-        self.assertTrue(all(item["rule_id"].startswith("rule.") for item in candidates))
-        self.assertTrue(all(item["rule_source"] == "knowledge_base.event_rules" for item in candidates))
-        self.assertIn("锡膏供给", candidates[0]["cause"])
+        self.assertTrue(all(item["rule_id"].startswith("rule.projected.") for item in candidates))
+        self.assertTrue(all(
+            item["rule_source"] == "knowledge_base.mechanism_projection"
+            for item in candidates
+        ))
+        # 少锡×整板的方向精确机理排最前:供锡中断/漏印。
+        self.assertEqual(candidates[0]["mechanism_id"], "mech.supply_interruption")
+        self.assertIn("供锡", candidates[0]["cause"])
 
     def test_abnormal_cause_candidates_carry_rule_identity(self) -> None:
         candidates = abnormal_cause_candidates("多锡", "同点多板异常", "高")
         self.assertTrue(candidates)
-        self.assertEqual(candidates[0]["rule_id"], "rule.abnormal_over_repeat_stencil_residue")
-        self.assertEqual(candidates[0]["rule_source"], "knowledge_base.abnormal_rules")
-        self.assertEqual(candidates[0]["cause"], "钢网底部残锡")
+        self.assertLessEqual(len(candidates), PROJECTION_CANDIDATE_LIMIT)
+        self.assertEqual(candidates[0]["rule_id"], "rule.projected.understencil_residue")
+        self.assertEqual(candidates[0]["cause"], "钢网底部残锡转印")
+        self.assertTrue(candidates[0]["action"])
 
     def test_abnormal_cause_candidates_fall_back_to_observation(self) -> None:
+        # 单点偶发不投影机理——单板孤立一次先复测。
         candidates = abnormal_cause_candidates("多锡", "单点偶发异常", "低")
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["rule_id"], "rule.abnormal_observe_next_board")
+        self.assertEqual(candidates[0]["cause"], "继续观察")
+
+
+class MechanismProjectionTest(unittest.TestCase):
+    def test_projection_respects_direction(self) -> None:
+        for rule in project_mechanisms("少锡", ("spatial.board_wide",)):
+            direction = (MECHANISMS[rule["mechanism"]]["properties"])["direction"]
+            self.assertIn(direction, {"少锡", "双向"}, rule["mechanism"])
+
+    def test_projection_respects_spatial_coverage(self) -> None:
+        for rule in project_mechanisms("多锡", ("spatial.single_pad",)):
+            typical = (MECHANISMS[rule["mechanism"]]["properties"])["typical_spatial"]
+            self.assertIn("spatial.single_pad", typical, rule["mechanism"])
+
+    def test_projection_ranks_exact_direction_before_bidirectional(self) -> None:
+        rules = project_mechanisms("少锡", ("spatial.single_pad",), "temporal.repeated")
+        directions = [
+            (MECHANISMS[rule["mechanism"]]["properties"])["direction"] for rule in rules
+        ]
+        exact_seen_after_bidirectional = False
+        bidirectional_seen = False
+        for direction in directions:
+            if direction == "双向":
+                bidirectional_seen = True
+            elif bidirectional_seen:
+                exact_seen_after_bidirectional = True
+        self.assertFalse(exact_seen_after_bidirectional)
+
+    def test_projection_is_capped(self) -> None:
+        for direction in ("多锡", "少锡"):
+            for spatial in ("spatial.single_pad", "spatial.board_wide",
+                            "spatial.component_multi_pad", "spatial.local_area"):
+                self.assertLessEqual(
+                    len(project_mechanisms(direction, (spatial,))),
+                    PROJECTION_CANDIDATE_LIMIT,
+                )
+
+    def test_projected_candidates_use_mechanism_label_and_action(self) -> None:
+        for rule in project_mechanisms("多锡", ("spatial.board_wide",)):
+            mechanism = MECHANISMS[rule["mechanism"]]
+            self.assertEqual(rule["cause"], mechanism["label"])
+            self.assertEqual(rule["action"], mechanism["properties"]["action"])
+
+
+class SpatialTypicalityTest(unittest.TestCase):
+    def test_typical_spatial_boosts_candidate(self) -> None:
+        result = diagnose(sample_observation(spatial="spatial.single_pad"))
+        scope = next(
+            item for item in result["root_cause_assessment"]
+            if item["rule_id"] == "rule.over_volume_single_pad"
+        )
+        # 残锡转印典型范围含单Pad:0.7 × 1.1 = 0.77。
+        self.assertEqual(scope["confidence"], 0.77)
+        self.assertIn("1.1(范围典型)", scope["confidence_formula"])
+
+    def test_no_observation_spatial_means_no_adjustment(self) -> None:
+        candidate = scope_root_cause_candidate("多锡", "单Pad孤立异常", "detail")
+        self.assertEqual(candidate["confidence"], candidate["confidence_base"])
 
 
 class RuleCatalogTest(unittest.TestCase):
     def test_rule_catalog_exposes_reviewable_rules(self) -> None:
         catalog = rule_catalog()
-        self.assertEqual(catalog["version"], "rule-catalog-v5")
+        self.assertEqual(catalog["version"], "rule-catalog-v6")
         self.assertGreater(catalog["rule_count"], 20)
         self.assertEqual(catalog["rule_count"], len(catalog["rules"]))
         rule_ids = [rule["rule_id"] for rule in catalog["rules"]]
         self.assertEqual(len(rule_ids), len(set(rule_ids)))
         self.assertIn("rule.over_volume_single_pad", rule_ids)
         self.assertIn("rule.insufficient_volume_board_same_direction", rule_ids)
-        self.assertIn("rule.event_over_volume_board_paste_viscosity", rule_ids)
-        self.assertIn("rule.abnormal_over_repeat_stencil_residue", rule_ids)
         self.assertIn("rule.review_gasketing_board_support", rule_ids)
         self.assertIn("disposition.widened_scope", rule_ids)
         self.assertTrue(all("condition" in rule and "output" in rule for rule in catalog["rules"]))
@@ -315,6 +424,7 @@ class RuleCatalogTest(unittest.TestCase):
             if item["mechanism_id"] == "mech.aperture_clogging"
         )
         self.assertEqual(clogging["element"], "钢网开口")
+        self.assertTrue(clogging["action"])
         self.assertTrue(any(
             check["availability"] == "not_collected" for check in clogging["auto_checks"]
         ))
@@ -328,29 +438,33 @@ class RuleCatalogTest(unittest.TestCase):
         self.assertIn("连续复判 3 块", over_single["output"]["recheck_method"])
         self.assertIn("原始 SPI 图像", over_single["output"]["evidence_required"])
 
-    def test_catalog_has_no_generated_boilerplate(self) -> None:
-        # 复核卡片字段只在专家手写过的规则上出现，事件/实时候选规则不再
-        # 用模板套话填充 applies_when。
+    def test_hand_written_projection_tables_are_gone(self) -> None:
+        # 事件/实时候选由机理目录投影生成,目录里不允许再出现手工格子规则;
+        # 唯一保留的是实时"继续观察"兜底。
         catalog = rule_catalog()
-        event_rule = next(
-            rule for rule in catalog["rules"]
-            if rule["rule_id"] == "rule.event_over_volume_local_paste_state"
-        )
-        self.assertNotIn("applies_when", event_rule["output"])
-        self.assertNotIn("first_check", event_rule["output"])
-
-    def test_squeegee_pressure_rules_do_not_guess_adjustment_direction(self) -> None:
-        catalog = rule_catalog()
-        pressure_rules = [
-            rule for rule in catalog["rules"]
-            if "squeegee_pressure" in rule["rule_id"]
+        legacy = [
+            rule["rule_id"] for rule in catalog["rules"]
+            if (rule["rule_id"].startswith("rule.event_")
+                or rule["rule_id"].startswith("rule.abnormal_"))
+            and rule["rule_id"] != "rule.abnormal_observe_next_board"
         ]
-        self.assertTrue(pressure_rules)
-        for rule in pressure_rules:
-            output_text = f"{rule['output'].get('cause', '')} {rule['output'].get('action', '')}"
-            self.assertIn("现场确认", output_text)
-            self.assertNotIn("适当提高", output_text)
-            self.assertNotIn("适当降低", output_text)
+        self.assertEqual(legacy, [])
+        # 决策梯里必须能看到投影这一级。
+        self.assertIn("decide.mechanism_projection",
+                      [rule["rule_id"] for rule in catalog["rules"]])
+
+    def test_squeegee_content_does_not_guess_adjustment_direction(self) -> None:
+        # 刮刀相关知识(机理规范动作 + 刮刀参数漂移规则)不预设调压方向,
+        # 必须现场确认后再调。
+        squeegee_mech = next(
+            item for item in rule_catalog()["mechanisms"]
+            if item["mechanism_id"] == "mech.squeegee_one_side"
+        )
+        drift_rule = rule_by_id("rule.squeegee_parameter_drift")
+        for text in (squeegee_mech["action"], drift_rule["action_template"]):
+            self.assertIn("现场", text)
+            self.assertNotIn("适当提高", text)
+            self.assertNotIn("适当降低", text)
 
 
 class DispositionTest(unittest.TestCase):
@@ -364,6 +478,14 @@ class DispositionTest(unittest.TestCase):
         )
         self.assertEqual(disposition["priority"], "P1")
         self.assertIn("现场排查", disposition["disposition"])
+
+    def test_disposition_vocabulary_is_ontology_backed(self) -> None:
+        # 处置文本与优先级取自本体 Disposition 概念,不再平行维护。
+        for rule in DISPOSITION_RULES:
+            concept = concept_by_id(rule["concept"])
+            self.assertIsNotNone(concept, rule["id"])
+            self.assertEqual(rule["disposition"], concept["label"])
+            self.assertEqual(rule["priority"], concept["properties"]["priority"])
 
 
 class OntologyEnrichmentTest(unittest.TestCase):

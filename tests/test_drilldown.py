@@ -355,13 +355,14 @@ class ScopeTest(unittest.TestCase):
         )
         self.assertEqual(spi_check["status"], "suspect")
         candidates = contract["root_cause_candidates"]
-        self.assertEqual(candidates[0]["cause"], "SPI程序阈值或识别框异常")
+        self.assertEqual(candidates[0]["cause"], "SPI程序误判")
         self.assertEqual(candidates[0]["evidence_level"], "高")
 
     def test_isolated_over_volume_gets_pad_specific_cause_and_action(self) -> None:
         contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
         candidates = contract["root_cause_candidates"]
-        self.assertEqual(candidates[0]["cause"], "钢网单孔底部残锡或开口异常")
+        # cause = 机理 label(单源);场景化动作仍来自单Pad范围规则。
+        self.assertEqual(candidates[0]["cause"], "钢网底部残锡转印")
         self.assertIn("钢网孔", candidates[0]["action"])
         self.assertEqual(
             [item["priority"] for item in candidates],
@@ -427,8 +428,8 @@ class MetricSignatureTest(unittest.TestCase):
 
     def test_all_metrics_matching_mechanism_signature_boosts_confidence(self) -> None:
         # 指标是无符号偏差幅度(全表核实):少锡触发时三个偏差幅度同时扩大,
-        # 完全命中"钢网开口堵塞"签名(体↑ 面↑/平 高↑/平),
-        # 置信 0.7×1.2=0.84 → 证据强度升为高。
+        # 完全命中"钢网开口堵塞"签名(体↑ 面↑/平 高↑/平),且单Pad在该机理
+        # 典型范围内:置信 0.7×1.2×1.1=0.924 → 证据强度升为高。
         specs = [{"avdp": 12.0, "aadp": 11.0, "ahdp": 10.0} for _ in range(10)]
         specs += [
             {"err": "Under Volume", "avdp": 70.0, "aadp": 60.0, "ahdp": 55.0}
@@ -439,7 +440,7 @@ class MetricSignatureTest(unittest.TestCase):
         primary = contract["root_cause_candidates"][0]
         self.assertEqual(primary["mechanism_id"], "mech.aperture_clogging")
         self.assertEqual(primary["signature_match"], "matched")
-        self.assertEqual(primary["confidence"], 0.84)
+        self.assertEqual(primary["confidence"], 0.924)
         self.assertEqual(primary["evidence_level"], "高")
         signature_check = next(
             check for check in primary["auto_checks"]
@@ -449,7 +450,7 @@ class MetricSignatureTest(unittest.TestCase):
 
     def test_opposite_direction_conflict_demotes_candidate(self) -> None:
         # 多锡触发但面积偏差幅度明显回落,与"底部残锡转印"签名(面积偏差应↑)
-        # 方向硬冲突 → 0.7×0.7=0.49,被趋势归因(0.6)反超。
+        # 方向硬冲突 → 0.7×0.7×1.1(范围典型)=0.539,被趋势归因(0.6)反超。
         specs = [{"avdp": 12.0, "aadp": 60.0, "ahdp": 10.0} for _ in range(10)]
         specs += [
             {"err": "Over Volume", "avdp": 80.0, "aadp": 20.0, "ahdp": 10.0}
@@ -462,7 +463,7 @@ class MetricSignatureTest(unittest.TestCase):
             if item["rule_id"] == "rule.over_volume_single_pad"
         )
         self.assertEqual(residue["signature_match"], "conflict")
-        self.assertEqual(residue["confidence"], 0.49)
+        self.assertEqual(residue["confidence"], 0.539)
         self.assertGreater(
             contract["root_cause_candidates"][0]["confidence"],
             residue["confidence"],
@@ -470,11 +471,14 @@ class MetricSignatureTest(unittest.TestCase):
 
     def test_flat_versus_required_up_is_only_partial_not_penalized(self) -> None:
         # 默认 fixture 只有体积上跳、面积/高度不动:对残锡签名是弱分歧
-        # (平 vs 要求↑),不加不减 —— 判界灵敏度不应误伤。
+        # (平 vs 要求↑),签名不加不减 —— 判界灵敏度不应误伤。仅剩范围
+        # 典型性 ×1.1(单Pad在残锡转印典型范围内)。
         contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
         primary = contract["root_cause_candidates"][0]
         self.assertEqual(primary["signature_match"], "partial")
-        self.assertEqual(primary["confidence"], primary["confidence_base"])
+        self.assertEqual(
+            primary["confidence"], round(primary["confidence_base"] * 1.1, 3),
+        )
 
 
 class PeriodicityTest(unittest.TestCase):
@@ -501,7 +505,7 @@ class PeriodicityTest(unittest.TestCase):
             specs += [{"err": "Over Volume", "avdp": 80.0} for _ in range(3)]
         contract = first_contract(make_boards(specs))
         candidates = contract["root_cause_candidates"]
-        self.assertEqual(candidates[0]["cause"], "钢网清洗或锡膏维护周期不匹配")
+        self.assertEqual(candidates[0]["cause"], "擦网周期不匹配")
         self.assertEqual(candidates[0]["evidence_level"], "高")
 
 
@@ -536,7 +540,7 @@ class ReportShapeTest(unittest.TestCase):
         report = build_drilldown_report(make_boards(trigger_specs(10, 3, 5)))
         contract = report["triggers"][0]["analysis_contract"]
 
-        self.assertEqual(contract["version"], "analysis-contract-v3")
+        self.assertEqual(contract["version"], "analysis-contract-v4")
         self.assertEqual(
             set(contract),
             {

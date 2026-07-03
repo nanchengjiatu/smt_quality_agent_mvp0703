@@ -22,17 +22,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ONTOLOGY_VERSION = "spi-printing-v3"
+ONTOLOGY_VERSION = "spi-printing-v4"
 ONTOLOGY_FOCUS = "锡膏印刷 + SPI 多锡/少锡异常管理"
 
-# v3 层次(docs/knowledge_model_v3_design.md):
+# v4 层次(docs/knowledge_model_v3_design.md,v4 为收敛版):
 #   实体层  ProcessStage / EquipmentElement / Material
 #   观测层  SpatialExtent / TemporalPattern / DataValidity 三个正交判定轴
 #          + EvidenceType(verification: auto|manual, availability)
-#   机理层  FailureMechanism(部位 × 签名 × 起病 × 可预警性 × 证据)
+#   机理层  FailureMechanism(部位 × 签名 × 起病 × 可预警性 × 证据 × 规范动作)
+#          —— v4 起机理是根因词表的唯一权威:规则候选的 cause 显示文本
+#          直接取机理 label,不再各自维护措辞。
 #   决策层  在 knowledge_base.py(诊断规则引用这里的机理与证据)
-# v2 的 AbnormalScope 概念保留一个版本(properties.deprecated=true),
-# 显示标签仍在用,三轴是权威表达。
+# 废弃概念保留一个版本(properties.deprecated=true)供旧记录解析:
+#   - v2 AbnormalScope(三轴是权威表达,显示标签仍在用)
+#   - v2/v3 RootCauseCandidate(机理 label 是权威根因词表;每个旧概念标注
+#     properties.mechanism 指向对应机理。趋势归因两条除外——趋势形态
+#     不足以锁定机理,仍是在用词表)
+#   - ActionType(规范动作随机理声明,场景化动作在规则里)
 
 
 @dataclass(frozen=True)
@@ -232,96 +238,112 @@ CONCEPTS = [
                     "NG 标签但主指标偏差不显著,需先复核 SPI 程序。"),
     OntologyConcept("validity.data_suspect", "DataValidity", "数据连续性存疑",
                     "触发段含复测/跨机种/板数不足等数据疑点。"),
-    # -- Root cause candidates ------------------------------------------------
+    # -- Root cause candidates (v2/v3 措辞词表,已废弃) --------------------------
+    # v4 起根因显示文本 = 机理 label(单源);这些概念保留供旧记录/旧契约
+    # 解析,properties.mechanism 指向对应机理。仅趋势归因两条仍在用——
+    # 趋势形态不足以锁定机理,是独立于机理层的归因词表。
     OntologyConcept(
         "root_cause.stencil_single_aperture_residue",
         "RootCauseCandidate",
         "钢网单孔底部残锡或开口异常",
-        "单 Pad 多锡的高频候选根因。",
+        "v3 单 Pad 多锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.understencil_residue"},
     ),
     OntologyConcept(
         "root_cause.stencil_single_aperture_blockage",
         "RootCauseCandidate",
         "钢网单孔堵塞或脱模不良",
-        "单 Pad 少锡的高频候选根因。",
+        "v3 单 Pad 少锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.aperture_clogging"},
     ),
     OntologyConcept(
         "root_cause.component_area_stencil_contamination",
         "RootCauseCandidate",
         "元件区域钢网底部污染或贴合不良",
-        "同元件多 Pad 多锡的候选根因。",
+        "v3 同元件多 Pad 多锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.understencil_residue"},
     ),
     OntologyConcept(
         "root_cause.component_area_blockage_or_support",
         "RootCauseCandidate",
         "元件区域堵孔或局部支撑不足",
-        "同元件多 Pad 少锡的候选根因。",
+        "v3 同元件多 Pad 少锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.aperture_clogging"},
     ),
     OntologyConcept(
         "root_cause.local_stencil_contamination",
         "RootCauseCandidate",
         "局部钢网污染、变形或支撑异常",
-        "局部区域多锡的候选根因。",
+        "v3 局部区域多锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.poor_gasketing"},
     ),
     OntologyConcept(
         "root_cause.local_stencil_blockage_or_rolling",
         "RootCauseCandidate",
         "局部钢网堵塞、锡膏滚动或支撑异常",
-        "局部区域少锡的候选根因。",
+        "v3 局部区域少锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.aperture_clogging"},
     ),
     OntologyConcept(
         "root_cause.board_printing_condition_drift",
         "RootCauseCandidate",
         "整板印刷条件或锡膏状态漂移",
-        "整板同向多锡的候选根因。",
+        "v3 整板同向多锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.paste_rheology_drift"},
     ),
     OntologyConcept(
         "root_cause.board_paste_supply_or_print_action",
         "RootCauseCandidate",
         "锡膏供给中断或整板印刷动作异常",
-        "整板同向少锡的候选根因。",
+        "v3 整板同向少锡措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.supply_interruption"},
     ),
     OntologyConcept(
         "root_cause.spi_program_false_alarm",
         "RootCauseCandidate",
         "SPI程序阈值或识别框异常",
-        "主指标偏差不支撑 NG 标签时的优先排除项。",
+        "v3 SPI 排除项措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.spi_false_call"},
     ),
     OntologyConcept(
         "root_cause.parameter_setpoint_drift",
         "RootCauseCandidate",
         "印刷参数实际值偏离设定",
-        "触发板印刷参数实际-计划偏差超出基线时的候选根因。",
+        "v3 参数漂移措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.parameter_mismatch"},
     ),
     OntologyConcept(
         "root_cause.printing_program_mismatch",
         "RootCauseCandidate",
         "印刷程序设定不适配",
-        "参数调整后异常随即恢复时的候选根因。",
+        "v3 参数恢复措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.parameter_mismatch"},
     ),
     OntologyConcept(
         "root_cause.maintenance_cycle_mismatch",
         "RootCauseCandidate",
         "钢网清洗或锡膏维护周期不匹配",
-        "NG 连段按固定节拍复发时的候选根因。",
+        "v3 周期复发措辞,现由机理 label 表达。",
+        (), {"deprecated": True, "mechanism": "mech.cleaning_cycle_mismatch"},
     ),
     OntologyConcept(
         "root_cause.cumulative_state_degradation",
         "RootCauseCandidate",
         "随生产累积的钢网或锡膏状态劣化",
-        "触发前指标持续爬升（渐变失效）时的候选根因。",
+        "触发前指标持续爬升（渐变失效）时的归因;趋势形态不锁定机理,在用。",
     ),
     OntologyConcept(
         "root_cause.discrete_process_change",
         "RootCauseCandidate",
         "触发时点的离散制程变化",
-        "无事前爬升、指标突跳（突变失效）时的候选根因。",
+        "无事前爬升、指标突跳（突变失效）时的归因;趋势形态不锁定机理,在用。",
     ),
     OntologyConcept(
         "root_cause.local_printing_state",
         "RootCauseCandidate",
         "局部印刷状态异常",
-        "证据不足以锁定单一物理原因时的兜底判断。",
+        "证据不足以锁定单一物理原因时的兜底判断措辞,在用（挂 mech.undetermined）。",
+        (), {"mechanism": "mech.undetermined"},
     ),
     # -- Evidence types -------------------------------------------------------
     # verification: auto=数据表内一条查询能回答 / manual=需现场人工确认。
@@ -402,38 +424,59 @@ CONCEPTS = [
     OntologyConcept("evidence.alignment_check", "EvidenceType", "Fiducial/对位复核",
                     "视觉识别、Gerber/钢网/PCB 对位的现场复核。",
                     (), {"verification": "manual"}),
-    # -- Actions --------------------------------------------------------------
+    # -- Actions (v3 词表,已废弃：规范动作随机理声明,场景化动作在规则里) --------
     OntologyConcept(
         "action.inspect_single_stencil_aperture",
         "ActionType",
         "检查单个钢网孔",
         "检查触发 Pad 对应钢网孔底部残锡、孔壁、开口尺寸和清洁状态。",
+        (), {"deprecated": True},
     ),
     OntologyConcept(
         "action.clean_blocked_aperture",
         "ActionType",
         "清洁堵塞钢网孔",
         "显微检查并清洁对应钢网孔，确认通透性和脱模条件。",
+        (), {"deprecated": True},
     ),
     OntologyConcept(
         "action.inspect_component_area",
         "ActionType",
         "检查元件区域印刷条件",
         "检查元件区域钢网底部污染、局部贴合、PCB 支撑和平整度。",
+        (), {"deprecated": True},
     ),
     OntologyConcept(
         "action.review_board_printing_conditions",
         "ActionType",
         "复核整板印刷条件",
         "复核锡膏状态、刮刀参数、钢网底面和整板印刷动作。",
+        (), {"deprecated": True},
     ),
     OntologyConcept(
         "action.review_raw_spi_image",
         "ActionType",
         "复核原始SPI图像",
         "复核测量框、Gerber 对位、上下限和主指标偏差。",
+        (), {"deprecated": True},
     ),
-    # -- Dispositions ----------------------------------------------------------
+    # -- Dispositions (与 knowledge_base.DISPOSITION_RULES 一一对应的处置词表) ---
+    OntologyConcept(
+        "disposition.data_continuity_review",
+        "Disposition",
+        "先复核数据连续性",
+        "触发段存在复测/跨机种/板数不足等数据疑点时的处置口径。",
+        (),
+        {"priority": "P3"},
+    ),
+    OntologyConcept(
+        "disposition.spi_program_review",
+        "Disposition",
+        "先复核 SPI 程序/图像",
+        "主指标偏差不支撑 NG 标签时的处置口径,先排除假异常。",
+        (),
+        {"priority": "P2"},
+    ),
     OntologyConcept(
         "disposition.immediate_field_check",
         "Disposition",
@@ -441,6 +484,22 @@ CONCEPTS = [
         "异常范围扩大或风险较高时的处置口径。",
         (),
         {"priority": "P1"},
+    ),
+    OntologyConcept(
+        "disposition.halt_and_contain",
+        "Disposition",
+        "立即处置并暂停放行同类风险板",
+        "触发后未恢复、继续生产会扩大不良风险时的处置口径。",
+        (),
+        {"priority": "P1"},
+    ),
+    OntologyConcept(
+        "disposition.confirm_primary_cause",
+        "Disposition",
+        "按首要根因执行现场确认",
+        "证据链较强时直接按首要根因验证的处置口径。",
+        (),
+        {"priority": "P2"},
     ),
     OntologyConcept(
         "disposition.fast_single_point_check",
@@ -451,6 +510,8 @@ CONCEPTS = [
         {"priority": "P3"},
     ),
     # -- Failure mechanisms (机理层：可推理、可闭环、可挂预警的失效机理目录) ------
+    # v4 起机理是根因词表与规范动作的单源：label 即候选根因显示文本,
+    # action 是该机理的规范首选动作(场景化动作由规则覆盖)。
     # signature 机器编码：<指标>:<up|down|flat|any>,多值用 | 分隔。
     # 重要口径(2026-07-03 经 full_excel0623 全表核实)：Comp_avdp/aadp/ahdp 是
     # **无符号偏差幅度**(全表最小值 0,Under Volume 行均值 40.8 与 Over 同向),
@@ -465,9 +526,11 @@ CONCEPTS = [
          "direction": "少锡", "onset": "gradual",
          "signature": "avdp:up,aadp:up|flat,ahdp:up|flat",
          "signature_text": "体积偏差↑ 面积偏差↑/平 高度偏差↑/平",
-         "typical_spatial": ["spatial.single_pad", "spatial.local_area"],
+         "typical_spatial": ["spatial.single_pad", "spatial.component_multi_pad",
+                             "spatial.local_area"],
          "typical_temporal": ["temporal.consecutive", "temporal.periodic"],
          "early_warning": "可预警：体积偏差 EWMA 渐变爬升",
+         "action": "显微检查并清洁对应钢网开口,确认通透性与孔壁状态;清洁后连续复判确认恢复。",
          "auto_checks": ["evidence.trend_slope", "evidence.cleaning_marker"],
          "manual_checks": ["evidence.microscope_aperture", "evidence.raw_spi_image"]},
     ),
@@ -482,6 +545,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.single_pad", "spatial.local_area"],
          "typical_temporal": ["temporal.consecutive", "temporal.repeated"],
          "early_warning": "",
+         "action": "核对脱模速度/距离/延时的设定与实际值,检查孔壁与 PCB 支撑,恢复基准后首件确认。",
          "auto_checks": ["evidence.parameter_drift"],
          "manual_checks": ["evidence.microscope_aperture", "evidence.board_support_check"]},
     ),
@@ -496,20 +560,23 @@ CONCEPTS = [
          "typical_spatial": ["spatial.single_pad", "spatial.component_multi_pad"],
          "typical_temporal": ["temporal.consecutive", "temporal.periodic"],
          "early_warning": "可预警：擦网间隔内面积偏差递增",
+         "action": "清洁钢网底面并复测下一块板;核对擦网周期与擦网耗材状态。",
          "auto_checks": ["evidence.trend_slope", "evidence.cleaning_marker"],
          "manual_checks": ["evidence.stencil_underside_check"]},
     ),
     OntologyConcept(
-        "mech.poor_gasketing", "FailureMechanism", "密合不良渗锡",
-        "钢网与 Pad 密合不良(支撑差/板翘/局部变形),锡膏从缝隙渗出,面积大高度低。",
+        "mech.poor_gasketing", "FailureMechanism", "钢网-PCB密合不良",
+        "钢网与 Pad 密合不良(支撑差/板翘/局部变形):渗锡时面积大高度低(多锡),"
+        "接触不良时锡膏转移不足(少锡)。",
         (),
         {"element": "element.board_support", "stage": "stage.print_stroke",
-         "direction": "多锡", "onset": "step",
+         "direction": "双向", "onset": "step",
          "signature": "avdp:flat|up,aadp:up,ahdp:up",
          "signature_text": "面积偏差↑ 高度偏差↑（体积平/↑）",
          "typical_spatial": ["spatial.local_area", "spatial.component_multi_pad"],
          "typical_temporal": ["temporal.consecutive", "temporal.repeated"],
          "early_warning": "",
+         "action": "检查 PCB 支撑、夹持与板翘,确认钢网-PCB 贴合;必要时调整支撑布局后首件确认。",
          "auto_checks": [],
          "manual_checks": ["evidence.board_support_check", "evidence.raw_spi_image"]},
     ),
@@ -524,6 +591,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.board_wide", "spatial.local_area"],
          "typical_temporal": ["temporal.consecutive"],
          "early_warning": "可预警：高度/面积偏差反向漂移",
+         "action": "检查锡膏回温/搅拌/使用时长与环境温湿度,确认流变状态;必要时更换锡膏。",
          "auto_checks": ["evidence.metric_signature"],
          "manual_checks": ["evidence.paste_condition_log"]},
     ),
@@ -538,6 +606,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.board_wide"],
          "typical_temporal": ["temporal.consecutive"],
          "early_warning": "可预警：整板均值 EWMA 漂移",
+         "action": "检查锡膏回温、搅拌、开封使用时长,确认黏度状态;必要时更换锡膏并首件确认。",
          "auto_checks": ["evidence.trend_slope"],
          "manual_checks": ["evidence.paste_condition_log"]},
     ),
@@ -552,6 +621,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.board_wide"],
          "typical_temporal": ["temporal.sporadic"],
          "early_warning": "",
+         "action": "确认钢网上锡膏余量与该板印刷行程是否完整,调取印刷机该周期日志;补膏后复测下一块板。",
          "auto_checks": [],
          "manual_checks": ["evidence.paste_condition_log"]},
     ),
@@ -566,6 +636,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.board_wide", "spatial.local_area"],
          "typical_temporal": ["temporal.consecutive"],
          "early_warning": "",
+         "action": "核对印刷参数设定值与实际值及变更审批记录,现场确认后恢复基准并首件确认。",
          "auto_checks": ["evidence.parameter_drift", "evidence.recovery"],
          "manual_checks": ["evidence.change_approval"]},
     ),
@@ -580,6 +651,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.board_wide", "spatial.local_area"],
          "typical_temporal": ["temporal.repeated"],
          "early_warning": "",
+         "action": "按印刷方向分组比较指标,现场检查前/后刮刀压力平衡与刃口磨损,现场确认后再调整。",
          "auto_checks": ["evidence.print_direction_split"],
          "manual_checks": ["evidence.squeegee_inspection"]},
     ),
@@ -594,6 +666,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.single_pad", "spatial.local_area"],
          "typical_temporal": ["temporal.periodic"],
          "early_warning": "可预警：周期检测 + 擦网频率参照",
+         "action": "核对擦网频率与擦网纸/溶剂/真空清洁效果,必要时立即手动清洁并将擦网周期提前一档验证。",
          "auto_checks": ["evidence.periodic_recurrence",
                           "evidence.cleaning_frequency_reference",
                           "evidence.cleaning_marker"],
@@ -610,6 +683,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.board_wide", "spatial.local_area"],
          "typical_temporal": ["temporal.consecutive"],
          "early_warning": "",
+         "action": "复核 Fiducial 识别、Gerber/钢网/PCB 对位与 MarkDeviation 趋势,再做首件确认。",
          "auto_checks": ["evidence.mark_deviation_trend"],
          "manual_checks": ["evidence.alignment_check"]},
     ),
@@ -624,6 +698,7 @@ CONCEPTS = [
          "typical_spatial": ["spatial.single_pad"],
          "typical_temporal": ["temporal.repeated"],
          "early_warning": "",
+         "action": "复核原始 SPI 图像、测量框、Gerber 对位与该 Pad 阈值;确认实物异常前不调整印刷参数。",
          "auto_checks": ["evidence.spi_metric_mismatch"],
          "manual_checks": ["evidence.raw_spi_image"]},
     ),
@@ -637,48 +712,43 @@ CONCEPTS = [
          "signature_text": "",
          "typical_spatial": [], "typical_temporal": [],
          "early_warning": "",
+         "action": "复核触发 Pad 原始 SPI 图像与对应钢网开口,复测下一块板确认是否重复。",
          "auto_checks": [],
          "manual_checks": ["evidence.raw_spi_image", "evidence.microscope_aperture"]},
     ),
 ]
 
-RELATIONS = [
+# --- Relations ---------------------------------------------------------------
+# v4 起关系不再手写业务边(v3 的 scope→cause/evidence/disposition 手写边引用
+# 废弃概念且与规则内容重复,已删)。骨架边保持静态;机理→缺陷方向边由机理的
+# direction 属性生成,保证图与机理目录永不漂移。机理→部位/阶段/证据的边
+# 直接由机理 properties 表达(TTL 渲染为资源引用),不在此重复。
+
+_STATIC_RELATIONS = [
     OntologyRelation("process.solder_paste_printing", "verified_by", "inspection.spi"),
     OntologyRelation("inspection.spi", "observes", "defect.over_volume"),
     OntologyRelation("inspection.spi", "observes", "defect.insufficient_volume"),
-    # scope -> candidate causes（多锡/少锡两个方向的候选都挂在范围上，
-    # 方向到具体规则的绑定在 knowledge_base 的规则条件里）
-    OntologyRelation("scope.single_pad_isolated", "has_candidate_cause", "root_cause.stencil_single_aperture_residue"),
-    OntologyRelation("scope.single_pad_isolated", "has_candidate_cause", "root_cause.stencil_single_aperture_blockage"),
-    OntologyRelation("scope.component_multi_pad", "has_candidate_cause", "root_cause.component_area_stencil_contamination"),
-    OntologyRelation("scope.component_multi_pad", "has_candidate_cause", "root_cause.component_area_blockage_or_support"),
-    OntologyRelation("scope.local_area", "has_candidate_cause", "root_cause.local_stencil_contamination"),
-    OntologyRelation("scope.local_area", "has_candidate_cause", "root_cause.local_stencil_blockage_or_rolling"),
-    OntologyRelation("scope.board_same_direction", "has_candidate_cause", "root_cause.board_printing_condition_drift"),
-    OntologyRelation("scope.board_same_direction", "has_candidate_cause", "root_cause.board_paste_supply_or_print_action"),
-    OntologyRelation("scope.suspected_spi_false_alarm", "has_candidate_cause", "root_cause.spi_program_false_alarm"),
-    # scope -> required evidence
-    OntologyRelation("scope.consecutive_same_pad", "requires_evidence", "evidence.full_spi_window"),
-    OntologyRelation("scope.consecutive_same_pad", "requires_evidence", "evidence.same_pad_consecutive_ng"),
-    OntologyRelation("scope.component_multi_pad", "requires_evidence", "evidence.component_multi_pad_ng"),
-    OntologyRelation("scope.board_same_direction", "requires_evidence", "evidence.board_same_direction_trend"),
-    OntologyRelation("scope.suspected_spi_false_alarm", "requires_evidence", "evidence.raw_spi_image"),
-    # scope -> disposition
-    OntologyRelation("scope.board_same_direction", "uses_disposition", "disposition.immediate_field_check"),
-    OntologyRelation("scope.local_area", "uses_disposition", "disposition.immediate_field_check"),
-    OntologyRelation("scope.single_point_random", "uses_disposition", "disposition.fast_single_point_check"),
-    # root cause -> evidence / action
-    OntologyRelation("root_cause.spi_program_false_alarm", "requires_evidence", "evidence.raw_spi_image"),
-    OntologyRelation("root_cause.parameter_setpoint_drift", "requires_evidence", "evidence.parameter_drift"),
-    OntologyRelation("root_cause.printing_program_mismatch", "requires_evidence", "evidence.recovery"),
-    OntologyRelation("root_cause.stencil_single_aperture_residue", "recommends_action", "action.inspect_single_stencil_aperture"),
-    OntologyRelation("root_cause.stencil_single_aperture_blockage", "recommends_action", "action.clean_blocked_aperture"),
-    OntologyRelation("root_cause.component_area_stencil_contamination", "recommends_action", "action.inspect_component_area"),
-    OntologyRelation("root_cause.component_area_blockage_or_support", "recommends_action", "action.inspect_component_area"),
-    OntologyRelation("root_cause.board_printing_condition_drift", "recommends_action", "action.review_board_printing_conditions"),
-    OntologyRelation("root_cause.board_paste_supply_or_print_action", "recommends_action", "action.review_board_printing_conditions"),
-    OntologyRelation("root_cause.spi_program_false_alarm", "recommends_action", "action.review_raw_spi_image"),
 ]
+
+_DIRECTION_DEFECT_IDS = {
+    "多锡": ("defect.over_volume",),
+    "少锡": ("defect.insufficient_volume",),
+    "双向": ("defect.over_volume", "defect.insufficient_volume"),
+}
+
+
+def _generated_relations() -> list[OntologyRelation]:
+    relations = []
+    for concept in CONCEPTS:
+        if concept.type != "FailureMechanism":
+            continue
+        direction = (concept.properties or {}).get("direction", "")
+        for defect_id in _DIRECTION_DEFECT_IDS.get(direction, ()):
+            relations.append(OntologyRelation(concept.id, "causes_defect", defect_id))
+    return relations
+
+
+RELATIONS = [*_STATIC_RELATIONS, *_generated_relations()]
 
 
 def _label_to_id(concept_type: str) -> dict[str, str]:
@@ -695,11 +765,8 @@ def _label_to_id(concept_type: str) -> dict[str, str]:
 
 DIRECTION_TO_CONCEPT_ID = _label_to_id("DefectDirection")
 SCOPE_TO_CONCEPT_ID = _label_to_id("AbnormalScope")
-CAUSE_TO_CONCEPT_ID = _label_to_id("RootCauseCandidate")
-
-SCOPE_LABELS = tuple(
-    concept.label for concept in CONCEPTS if concept.type == "AbnormalScope"
-)
+# 根因词表：机理 label 是权威;废弃的 v2/v3 措辞保留映射,旧记录仍可解析。
+CAUSE_TO_CONCEPT_ID = {**_label_to_id("RootCauseCandidate"), **_label_to_id("FailureMechanism")}
 
 MECHANISMS = {
     concept.id: concept.to_dict()
@@ -775,10 +842,7 @@ def ontology_ids_for(
 _TTL_PREDICATES = {
     "verified_by": "verifiedBy",
     "observes": "observes",
-    "has_candidate_cause": "hasCandidateCause",
-    "requires_evidence": "requiresEvidence",
-    "recommends_action": "recommendsAction",
-    "uses_disposition": "usesDisposition",
+    "causes_defect": "causesDefect",
 }
 
 _TTL_CLASS_LABELS = {
@@ -792,20 +856,17 @@ _TTL_CLASS_LABELS = {
     "SpatialExtent": "空间范围",
     "TemporalPattern": "时间模式",
     "DataValidity": "数据有效性",
-    "RootCauseCandidate": "根因候选",
+    "RootCauseCandidate": "根因候选措辞(v3,已废弃,机理 label 为权威)",
     "FailureMechanism": "失效机理",
     "EvidenceType": "证据类型",
-    "ActionType": "排查动作",
+    "ActionType": "排查动作(v3,已废弃,规范动作随机理声明)",
     "Disposition": "处置方式",
 }
 
 _TTL_PROPERTY_LABELS = {
     "verifiedBy": "由...验证",
     "observes": "观察到",
-    "hasCandidateCause": "候选根因为",
-    "requiresEvidence": "需要证据",
-    "recommendsAction": "建议动作",
-    "usesDisposition": "使用处置方式",
+    "causesDefect": "致缺陷方向",
     "priority": "优先级",
     "direction": "缺陷方向值",
     "judgedBy": "判定口径",
@@ -820,8 +881,10 @@ _TTL_PROPERTY_LABELS = {
     "typicalSpatial": "典型空间范围",
     "typicalTemporal": "典型时间模式",
     "earlyWarning": "可预警性",
+    "canonicalAction": "规范动作",
     "autoCheck": "自动核验证据",
     "manualCheck": "人工确认证据",
+    "expressesMechanism": "对应机理",
     "version": "版本",
     "focus": "聚焦范围",
 }
@@ -841,8 +904,10 @@ _TTL_PROPERTY_KEYS = {
     "typical_spatial": "typicalSpatial",
     "typical_temporal": "typicalTemporal",
     "early_warning": "earlyWarning",
+    "action": "canonicalAction",
     "auto_checks": "autoCheck",
     "manual_checks": "manualCheck",
+    "mechanism": "expressesMechanism",
 }
 
 

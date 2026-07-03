@@ -1002,6 +1002,7 @@ function renderOntologyDetail(graph, selectedId) {
     if (props.onset) lines.push(`起病：${ONSET_LABELS[props.onset] || props.onset}`);
     if (props.signature_text) lines.push(`签名：${props.signature_text}`);
     if (props.early_warning) lines.push(`预警：${props.early_warning}`);
+    if (props.action) lines.push(`规范动作：${props.action}`);
   }
   if (concept.type === "EvidenceType") {
     lines.push(props.verification === "manual"
@@ -1244,6 +1245,7 @@ function renderMechanismCard({ mech, rules: list }) {
         ${mech.early_warning ? `<span class="mech-warning">${escapeHtml(mech.early_warning)}</span>` : ""}
       </div>
       <p class="details">${escapeHtml(mech.description)}</p>
+      ${mech.action ? `<p class="details">规范动作：${escapeHtml(mech.action)}</p>` : ""}
       ${renderCheckChips(mech)}
       ${list.length
         ? list.map(renderRuleEntry).join("")
