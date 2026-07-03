@@ -1,8 +1,10 @@
 # SMT 质量知识模型 v3 设计
 
-状态:已评审通过;**第一阶段已实施**(2026-07-03,ontology spi-printing-v3 /
-rule-catalog-v5 / analysis-contract-v3);第二阶段(三指标签名、参数分组、
-擦网频率参照)待做
+状态:已评审通过;**第一、二阶段均已实施**(2026-07-03)。
+第一阶段:ontology spi-printing-v3 / rule-catalog-v5 / analysis-contract-v3。
+第二阶段:三指标签名甄别(判界 max(3σ,10pp),据真实分布)、参数按机理分组
+(SnapOff*/SQG*/Cleaning*)、擦网频率参照(偏离最近整倍数 ≤0.2 周期加权)。
+数据侧需求(CleaningAfterLastBoard/PrintDirection/温湿度/Pad级offset)待推进。
 前置:2026-07-03 知识治理重构(词表/规则单源化、analysis_contract v2,提交 c6cce58)
 
 ---
@@ -97,6 +99,12 @@ v2 概念的映射关系(保证迁移可回溯):
 UI 展示继续用组合后的中文标签(如"单Pad连续异常"),但契约里三轴分开给。
 
 ### 2.3 机理层:失效机理目录(v3 的核心增量)
+
+> **签名口径修正(2026-07-03 第二阶段实施时核实)**:`Comp_avdp/aadp/ahdp`
+> 是**无符号偏差幅度**——全表 46587 行三指标最小值均为 0,Under Volume 行
+> avdp 均值 40.8 与 Over 同量级。缺陷的物理方向只在 errName 标签里。因此
+> 签名统一按"哪些指标劣化(偏差幅度扩大↑)/回落↓/不变(平)"表达,本节
+> 表格中的 ↑↓ 均指偏差幅度而非物理锡量方向;权威签名以 ontology.py 为准。
 
 每个机理是一个结构化对象,替代 v2 的根因文本标签:
 

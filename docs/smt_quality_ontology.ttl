@@ -453,16 +453,16 @@ smt:evidence.spi_metric_mismatch
 smt:evidence.metric_signature
     rdf:type smt:EvidenceType ;
     rdfs:label "三指标签名"@zh ;
-    rdfs:comment "体积/面积/高度偏差组合特征与机理签名的匹配度(第二阶段)。"@zh ;
+    rdfs:comment "体积/面积/高度偏差组合特征与机理签名的匹配度,判界 max(3σ, 10pp)。"@zh ;
     smt:verification "auto"@zh ;
-    smt:availability "planned"@zh .
+    smt:availability "available"@zh .
 
 smt:evidence.cleaning_frequency_reference
     rdf:type smt:EvidenceType ;
     rdfs:label "擦网频率参照"@zh ;
-    rdfs:comment "NG 连段间隔与 CleaningFrequency 设定值的整数倍关系(第二阶段)。"@zh ;
+    rdfs:comment "NG 连段间隔与 CleaningFrequency 设定值的整数倍关系(容差 20%)。"@zh ;
     smt:verification "auto"@zh ;
-    smt:availability "planned"@zh .
+    smt:availability "available"@zh .
 
 smt:evidence.mark_deviation_trend
     rdf:type smt:EvidenceType ;
@@ -590,8 +590,8 @@ smt:mech.aperture_clogging
     smt:occursAtStage smt:stage.release ;
     smt:direction "少锡"@zh ;
     smt:onset "gradual"@zh ;
-    smt:signature "avdp:down,aadp:down|flat,ahdp:down"@zh ;
-    smt:signatureText "体积↓ 面积↓/平 高度↓"@zh ;
+    smt:signature "avdp:up,aadp:up|flat,ahdp:up|flat"@zh ;
+    smt:signatureText "体积偏差↑ 面积偏差↑/平 高度偏差↑/平"@zh ;
     smt:typicalSpatial smt:spatial.single_pad, smt:spatial.local_area ;
     smt:typicalTemporal smt:temporal.consecutive, smt:temporal.periodic ;
     smt:earlyWarning "可预警：体积偏差 EWMA 渐变爬升"@zh ;
@@ -606,8 +606,8 @@ smt:mech.poor_release
     smt:occursAtStage smt:stage.release ;
     smt:direction "少锡"@zh ;
     smt:onset "any"@zh ;
-    smt:signature "avdp:down,aadp:flat,ahdp:any"@zh ;
-    smt:signatureText "体积↓ 面积平 高度不稳"@zh ;
+    smt:signature "avdp:up,aadp:flat,ahdp:up"@zh ;
+    smt:signatureText "体积偏差↑ 面积偏差平 高度偏差↑"@zh ;
     smt:typicalSpatial smt:spatial.single_pad, smt:spatial.local_area ;
     smt:typicalTemporal smt:temporal.consecutive, smt:temporal.repeated ;
     smt:autoCheck smt:evidence.parameter_drift ;
@@ -621,8 +621,8 @@ smt:mech.understencil_residue
     smt:occursAtStage smt:stage.cleaning_cycle ;
     smt:direction "多锡"@zh ;
     smt:onset "gradual"@zh ;
-    smt:signature "avdp:up,aadp:up,ahdp:flat|down"@zh ;
-    smt:signatureText "体积↑ 面积↑ 高度平/↓"@zh ;
+    smt:signature "avdp:up,aadp:up,ahdp:flat|up"@zh ;
+    smt:signatureText "体积偏差↑ 面积偏差↑ 高度偏差平/↑"@zh ;
     smt:typicalSpatial smt:spatial.single_pad, smt:spatial.component_multi_pad ;
     smt:typicalTemporal smt:temporal.consecutive, smt:temporal.periodic ;
     smt:earlyWarning "可预警：擦网间隔内面积偏差递增"@zh ;
@@ -637,8 +637,8 @@ smt:mech.poor_gasketing
     smt:occursAtStage smt:stage.print_stroke ;
     smt:direction "多锡"@zh ;
     smt:onset "step"@zh ;
-    smt:signature "avdp:up|flat,aadp:up,ahdp:down"@zh ;
-    smt:signatureText "面积↑ 高度↓"@zh ;
+    smt:signature "avdp:flat|up,aadp:up,ahdp:up"@zh ;
+    smt:signatureText "面积偏差↑ 高度偏差↑（体积平/↑）"@zh ;
     smt:typicalSpatial smt:spatial.local_area, smt:spatial.component_multi_pad ;
     smt:typicalTemporal smt:temporal.consecutive, smt:temporal.repeated ;
     smt:manualCheck smt:evidence.board_support_check, smt:evidence.raw_spi_image .
@@ -651,8 +651,8 @@ smt:mech.slump
     smt:occursAtStage smt:stage.release ;
     smt:direction "多锡"@zh ;
     smt:onset "gradual"@zh ;
-    smt:signature "avdp:flat,aadp:up,ahdp:down"@zh ;
-    smt:signatureText "体积平 面积↑ 高度↓"@zh ;
+    smt:signature "avdp:flat,aadp:up,ahdp:up"@zh ;
+    smt:signatureText "体积偏差平 面积偏差↑ 高度偏差↑"@zh ;
     smt:typicalSpatial smt:spatial.board_wide, smt:spatial.local_area ;
     smt:typicalTemporal smt:temporal.consecutive ;
     smt:earlyWarning "可预警：高度/面积偏差反向漂移"@zh ;
@@ -668,7 +668,7 @@ smt:mech.paste_rheology_drift
     smt:direction "双向"@zh ;
     smt:onset "gradual"@zh ;
     smt:signature "avdp:any,aadp:any,ahdp:any"@zh ;
-    smt:signatureText "三指标同向渐变"@zh ;
+    smt:signatureText "三指标偏差同向渐变"@zh ;
     smt:typicalSpatial smt:spatial.board_wide ;
     smt:typicalTemporal smt:temporal.consecutive ;
     smt:earlyWarning "可预警：整板均值 EWMA 漂移"@zh ;
@@ -683,8 +683,8 @@ smt:mech.supply_interruption
     smt:occursAtStage smt:stage.print_stroke ;
     smt:direction "少锡"@zh ;
     smt:onset "step"@zh ;
-    smt:signature "avdp:down,aadp:down,ahdp:down"@zh ;
-    smt:signatureText "整板三指标同时↓↓"@zh ;
+    smt:signature "avdp:up,aadp:up,ahdp:up"@zh ;
+    smt:signatureText "整板三指标偏差同时↑"@zh ;
     smt:typicalSpatial smt:spatial.board_wide ;
     smt:typicalTemporal smt:temporal.sporadic ;
     smt:manualCheck smt:evidence.paste_condition_log .

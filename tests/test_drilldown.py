@@ -20,6 +20,8 @@ def make_row(
     compname: str = "C1_1",
     errname: str = "PASS",
     avdp: float = 12.0,
+    aadp: float = 11.0,
+    ahdp: float = 10.0,
     printspeed_plan: int = 40,
     markdeviation_plan: float = 0.0,
     abs_y1backward: float = 0.0,
@@ -38,8 +40,8 @@ def make_row(
         "compname": compname,
         "comp_errname": errname,
         "comp_avdp": avdp,
-        "comp_aadp": 11.0,
-        "comp_ahdp": 10.0,
+        "comp_aadp": aadp,
+        "comp_ahdp": ahdp,
         "comp_px": px,
         "comp_py": py,
         "printspeed_plan": printspeed_plan,
@@ -59,6 +61,8 @@ def make_boards(specs: list[dict]) -> list[dict]:
             index,
             errname=spec.get("err", "PASS"),
             avdp=spec.get("avdp", 12.0),
+            aadp=spec.get("aadp", 11.0),
+            ahdp=spec.get("ahdp", 10.0),
             printspeed_plan=spec.get("plan", 40),
             markdeviation_plan=spec.get("noise_plan", 0.0),
             px=10.0,
@@ -402,13 +406,75 @@ class ScopeTest(unittest.TestCase):
         self.assertTrue(primary["manual_checks"])
         self.assertTrue(primary["decided_by"].startswith("decide."))
         statuses = {check["status"] for check in primary["auto_checks"]}
-        self.assertTrue(statuses <= {"核验通过", "未见", "数据未采集", "待实现"})
+        self.assertTrue(statuses <= {"核验通过", "未见", "不匹配", "数据未采集", "待实现"})
         # 未采集的证据必须如实标注,不允许伪装成已核验。
         cleaning = next(
             check for check in primary["auto_checks"]
             if check["evidence_id"] == "evidence.cleaning_marker"
         )
         self.assertEqual(cleaning["status"], "数据未采集")
+
+
+class MetricSignatureTest(unittest.TestCase):
+    def test_signature_appears_in_contract_evidence(self) -> None:
+        contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
+        item = next(
+            entry for entry in contract["evidence"]["summary"]
+            if entry["name"] == "指标签名"
+        )
+        self.assertIn("体积偏差↑", item["value"])
+        self.assertIn("面积偏差平", item["value"])
+
+    def test_all_metrics_matching_mechanism_signature_boosts_confidence(self) -> None:
+        # 指标是无符号偏差幅度(全表核实):少锡触发时三个偏差幅度同时扩大,
+        # 完全命中"钢网开口堵塞"签名(体↑ 面↑/平 高↑/平),
+        # 置信 0.7×1.2=0.84 → 证据强度升为高。
+        specs = [{"avdp": 12.0, "aadp": 11.0, "ahdp": 10.0} for _ in range(10)]
+        specs += [
+            {"err": "Under Volume", "avdp": 70.0, "aadp": 60.0, "ahdp": 55.0}
+            for _ in range(3)
+        ]
+        specs += [{"avdp": 12.0, "aadp": 11.0, "ahdp": 10.0} for _ in range(2)]
+        contract = first_contract(make_boards(specs))
+        primary = contract["root_cause_candidates"][0]
+        self.assertEqual(primary["mechanism_id"], "mech.aperture_clogging")
+        self.assertEqual(primary["signature_match"], "matched")
+        self.assertEqual(primary["confidence"], 0.84)
+        self.assertEqual(primary["evidence_level"], "高")
+        signature_check = next(
+            check for check in primary["auto_checks"]
+            if check["evidence_id"] == "evidence.metric_signature"
+        )
+        self.assertEqual(signature_check["status"], "核验通过")
+
+    def test_opposite_direction_conflict_demotes_candidate(self) -> None:
+        # 多锡触发但面积偏差幅度明显回落,与"底部残锡转印"签名(面积偏差应↑)
+        # 方向硬冲突 → 0.7×0.7=0.49,被趋势归因(0.6)反超。
+        specs = [{"avdp": 12.0, "aadp": 60.0, "ahdp": 10.0} for _ in range(10)]
+        specs += [
+            {"err": "Over Volume", "avdp": 80.0, "aadp": 20.0, "ahdp": 10.0}
+            for _ in range(3)
+        ]
+        specs += [{"avdp": 12.0, "aadp": 60.0, "ahdp": 10.0} for _ in range(2)]
+        contract = first_contract(make_boards(specs))
+        residue = next(
+            item for item in contract["root_cause_candidates"]
+            if item["rule_id"] == "rule.over_volume_single_pad"
+        )
+        self.assertEqual(residue["signature_match"], "conflict")
+        self.assertEqual(residue["confidence"], 0.49)
+        self.assertGreater(
+            contract["root_cause_candidates"][0]["confidence"],
+            residue["confidence"],
+        )
+
+    def test_flat_versus_required_up_is_only_partial_not_penalized(self) -> None:
+        # 默认 fixture 只有体积上跳、面积/高度不动:对残锡签名是弱分歧
+        # (平 vs 要求↑),不加不减 —— 判界灵敏度不应误伤。
+        contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
+        primary = contract["root_cause_candidates"][0]
+        self.assertEqual(primary["signature_match"], "partial")
+        self.assertEqual(primary["confidence"], primary["confidence_base"])
 
 
 class PeriodicityTest(unittest.TestCase):

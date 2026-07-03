@@ -5,11 +5,13 @@ from smt_quality_agent.knowledge_base import (
     RULES,
     RULES_WITHOUT_MECHANISM,
     abnormal_cause_candidates,
+    cleaning_cycle_aligned,
     diagnose,
     disposition_for,
     enrich_with_ontology_ids,
     event_cause_candidates,
     event_scope_for_category,
+    match_metric_signature,
     rule_by_id,
     rule_catalog,
     scope_root_cause_candidate,
@@ -35,6 +37,9 @@ def sample_observation(**overrides) -> dict:
         "periodic": False,
         "periodic_gap": None,
         "periodicity_detail": "",
+        "cleaning_frequency": None,
+        "metric_signature": {},
+        "metric_signature_text": "",
         "spi_detail": "",
         "data_status": "pass",
     }
@@ -130,6 +135,88 @@ class DecisionLayerTest(unittest.TestCase):
         self.assertEqual(confidences, sorted(confidences, reverse=True))
         self.assertEqual([item["priority"] for item in assessments],
                          list(range(1, len(assessments) + 1)))
+
+
+class SignatureMatchTest(unittest.TestCase):
+    def test_full_match_needs_two_evaluated_metrics(self) -> None:
+        status, _ = match_metric_signature(
+            "avdp:down,aadp:down|flat,ahdp:down",
+            {"avdp": "down", "aadp": "flat", "ahdp": "down"},
+        )
+        self.assertEqual(status, "matched")
+
+    def test_opposite_direction_is_hard_conflict(self) -> None:
+        status, detail = match_metric_signature(
+            "avdp:up,aadp:up,ahdp:flat|down",
+            {"avdp": "up", "aadp": "down", "ahdp": "flat"},
+        )
+        self.assertEqual(status, "conflict")
+        self.assertIn("aadp", detail)
+
+    def test_flat_versus_up_is_partial(self) -> None:
+        status, _ = match_metric_signature(
+            "avdp:up,aadp:up,ahdp:flat|down",
+            {"avdp": "up", "aadp": "flat", "ahdp": "flat"},
+        )
+        self.assertEqual(status, "partial")
+
+    def test_no_constraints_or_no_observation_is_unknown(self) -> None:
+        self.assertEqual(match_metric_signature("", {"avdp": "up"})[0], "unknown")
+        self.assertEqual(
+            match_metric_signature("avdp:any,aadp:any,ahdp:any", {"avdp": "up"})[0],
+            "unknown",
+        )
+        self.assertEqual(match_metric_signature("avdp:up", {})[0], "unknown")
+
+
+class CleaningAlignmentTest(unittest.TestCase):
+    def test_integer_multiple_within_tolerance_aligns(self) -> None:
+        self.assertTrue(cleaning_cycle_aligned(9.0, 3.0))
+        self.assertTrue(cleaning_cycle_aligned(9.5, 3.0))
+
+    def test_tolerance_is_per_cycle_not_per_multiple(self) -> None:
+        # 13 相对 12(4×3)差 1 板 > 0.2×3,不允许因倍数大而放宽。
+        self.assertFalse(cleaning_cycle_aligned(13.0, 3.0))
+        self.assertFalse(cleaning_cycle_aligned(7.5, 3.0))
+
+    def test_missing_data_never_aligns(self) -> None:
+        self.assertFalse(cleaning_cycle_aligned(None, 3.0))
+        self.assertFalse(cleaning_cycle_aligned(9.0, None))
+
+    def test_alignment_boosts_periodic_candidate(self) -> None:
+        result = diagnose(sample_observation(
+            periodic=True, periodic_gap=9.0, cleaning_frequency=3.0,
+        ))
+        periodic = next(
+            item for item in result["root_cause_assessment"]
+            if item["rule_id"] == "rule.periodic_maintenance_cycle"
+        )
+        self.assertEqual(periodic["confidence"], 0.92)
+        reference = next(
+            check for check in periodic["auto_checks"]
+            if check["evidence_id"] == "evidence.cleaning_frequency_reference"
+        )
+        self.assertEqual(reference["status"], "核验通过")
+
+
+class ParameterGroupingTest(unittest.TestCase):
+    def test_release_parameters_nominate_poor_release_mechanism(self) -> None:
+        result = diagnose(sample_observation(
+            drifted_parameters=["snapoffspeed", "printspeed"],
+        ))
+        by_rule = {item["rule_id"]: item for item in result["root_cause_assessment"]}
+        self.assertIn("rule.release_parameter_drift", by_rule)
+        release = by_rule["rule.release_parameter_drift"]
+        self.assertEqual(release["mechanism_id"], "mech.poor_release")
+        self.assertIn("snapoffspeed", release["evidence"])
+        self.assertIn("rule.parameter_drift", by_rule)
+        self.assertIn("printspeed", by_rule["rule.parameter_drift"]["evidence"])
+
+    def test_grouped_parameters_do_not_duplicate_generic_rule(self) -> None:
+        result = diagnose(sample_observation(drifted_parameters=["cleaningspeed"]))
+        rule_ids = [item["rule_id"] for item in result["root_cause_assessment"]]
+        self.assertIn("rule.cleaning_parameter_drift", rule_ids)
+        self.assertNotIn("rule.parameter_drift", rule_ids)
 
 
 class LookupTest(unittest.TestCase):

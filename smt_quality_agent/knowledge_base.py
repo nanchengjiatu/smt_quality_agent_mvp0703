@@ -133,6 +133,50 @@ PARAMETER_DRIFT_ROOT_CAUSE = {
     "confidence_base": 0.75,
 }
 
+# 参数按机理分组:组内参数漂移产生绑定对应机理的专属候选,替代笼统的
+# "印刷参数偏离设定"。分组令牌按参数名(小写)子串匹配。
+RELEASE_PARAMETER_DRIFT_RULE = {
+    "id": "rule.release_parameter_drift",
+    "rule_type": "evidence_root_cause",
+    "condition": {"trigger": "脱模参数(SnapOff*)实际-计划偏差超出基线"},
+    "source": "knowledge_base",
+    "cause": "脱模参数漂移或设定变化",
+    "evidence_template": "触发板脱模参数 {parameters} 的实际-计划偏差超出基线。",
+    "action_template": "核对 {parameters} 的设定值与实际值，确认脱模速度/距离/延时与钢网-PCB 分离动作；恢复基准后做首件确认。",
+    "evidence_required": ["SnapOff 系设定值与实际值", "事件时段设备日志", "首块 NG 时间"],
+    "confidence_base": 0.75,
+}
+
+SQUEEGEE_PARAMETER_DRIFT_RULE = {
+    "id": "rule.squeegee_parameter_drift",
+    "rule_type": "evidence_root_cause",
+    "condition": {"trigger": "刮刀参数(SQG*)实际-计划偏差超出基线"},
+    "source": "knowledge_base",
+    "cause": "刮刀参数漂移或设定变化",
+    "evidence_template": "触发板刮刀参数 {parameters} 的实际-计划偏差超出基线。",
+    "action_template": "核对 {parameters} 的设定值与实际值，现场确认刮刀压力/升降速度与刃口状态后再调整。",
+    "evidence_required": ["刮刀参数设定值与实际值", "刮刀状态检查", "首块 NG 时间"],
+    "confidence_base": 0.75,
+}
+
+CLEANING_PARAMETER_DRIFT_RULE = {
+    "id": "rule.cleaning_parameter_drift",
+    "rule_type": "evidence_root_cause",
+    "condition": {"trigger": "擦网参数(Cleaning*)实际-计划偏差超出基线"},
+    "source": "knowledge_base",
+    "cause": "擦网参数漂移或设定变化",
+    "evidence_template": "触发板擦网参数 {parameters} 的实际-计划偏差超出基线。",
+    "action_template": "核对 {parameters} 的设定值与实际值，确认擦网频率/速度与清洁效果；必要时立即手动清洁并复判。",
+    "evidence_required": ["擦网参数设定值与实际值", "擦网耗材检查", "复判结果"],
+    "confidence_base": 0.75,
+}
+
+_PARAMETER_GROUPS = [
+    ("snapoff", RELEASE_PARAMETER_DRIFT_RULE),
+    ("sqg", SQUEEGEE_PARAMETER_DRIFT_RULE),
+    ("cleaning", CLEANING_PARAMETER_DRIFT_RULE),
+]
+
 FALLBACK_ROOT_CAUSE = {
     "id": "rule.fallback_local_printing_state",
     "rule_type": "evidence_root_cause",
@@ -564,6 +608,9 @@ RULES: list[dict[str, Any]] = [
     PARAMETER_RECOVERY_ROOT_CAUSE,
     PERIODIC_ROOT_CAUSE,
     PARAMETER_DRIFT_ROOT_CAUSE,
+    RELEASE_PARAMETER_DRIFT_RULE,
+    SQUEEGEE_PARAMETER_DRIFT_RULE,
+    CLEANING_PARAMETER_DRIFT_RULE,
     FALLBACK_ROOT_CAUSE,
     *_finalize(_SCOPE_ROOT_CAUSE_RULES, "scope_root_cause", "knowledge_base",
                { "recheck_method": DEFAULT_RECHECK_METHOD}),
@@ -587,6 +634,9 @@ RULE_MECHANISMS = {
     "rule.parameter_recovery": "mech.parameter_mismatch",
     "rule.periodic_maintenance_cycle": "mech.cleaning_cycle_mismatch",
     "rule.parameter_drift": "mech.parameter_mismatch",
+    "rule.release_parameter_drift": "mech.poor_release",
+    "rule.squeegee_parameter_drift": "mech.parameter_mismatch",
+    "rule.cleaning_parameter_drift": "mech.cleaning_cycle_mismatch",
     "rule.fallback_local_printing_state": "mech.undetermined",
     # scope 规则
     "rule.over_volume_single_pad": "mech.understencil_residue",
@@ -727,6 +777,78 @@ def confidence_level(confidence: float) -> str:
     return "低"
 
 
+# --- Metric-signature discrimination (三指标签名甄别) ---------------------------
+# 观测签名由 drilldown 按 max(3σ, 10pp) 判界得出;这里只做与机理声明签名的
+# 匹配。方向硬冲突(观测↑而机理只允许↓,或反之)才降权;"平 vs 要求↑"这类
+# 弱分歧记 partial 不调整,避免判界灵敏度误伤。
+SIGNATURE_MATCH_MULTIPLIER = 1.2
+SIGNATURE_CONFLICT_MULTIPLIER = 0.7
+CONFIDENCE_CAP = 0.95
+
+# NG 周期与擦网频率设定成整数倍关系时,周期性候选的加权。
+CLEANING_ALIGNMENT_MULTIPLIER = 1.15
+CLEANING_ALIGNMENT_TOLERANCE = 0.2
+
+
+def _parse_signature(signature: str) -> dict[str, set[str]]:
+    """'avdp:down,aadp:down|flat' -> {'avdp': {'down'}, 'aadp': {'down','flat'}};
+    'any' constraints are dropped (no discriminating power)."""
+    constraints: dict[str, set[str]] = {}
+    for part in (signature or "").split(","):
+        if ":" not in part:
+            continue
+        metric, allowed_text = part.split(":", 1)
+        allowed = {value.strip() for value in allowed_text.split("|")}
+        if "any" not in allowed:
+            constraints[metric.strip()] = allowed
+    return constraints
+
+
+def match_metric_signature(
+    signature: str,
+    observed: dict[str, str],
+) -> tuple[str, str]:
+    """Match one mechanism's declared signature against the observed one.
+
+    Returns (status, detail): matched(全部受约束指标一致,≥2 项可判) /
+    conflict(存在方向硬冲突) / partial(部分一致或仅 1 项可判) /
+    unknown(无声明或无观测)。"""
+    constraints = _parse_signature(signature)
+    if not constraints or not observed:
+        return "unknown", "机理未声明签名或观测数据不足。"
+
+    evaluated = 0
+    agreed = 0
+    conflicts = []
+    for metric, allowed in constraints.items():
+        verdict = observed.get(metric)
+        if verdict is None:
+            continue
+        evaluated += 1
+        if verdict in allowed:
+            agreed += 1
+        elif (verdict == "up" and allowed == {"down"}) or (verdict == "down" and allowed == {"up"}):
+            conflicts.append(metric)
+    if not evaluated:
+        return "unknown", "受约束指标均无足够基线数据。"
+    if conflicts:
+        return "conflict", f"指标 {'、'.join(conflicts)} 与机理签名方向相反。"
+    if agreed == evaluated and evaluated >= 2:
+        return "matched", f"{evaluated} 项受约束指标全部符合机理签名。"
+    return "partial", f"{agreed}/{evaluated} 项受约束指标符合机理签名。"
+
+
+def cleaning_cycle_aligned(gap: float | None, frequency: float | None) -> bool:
+    """NG 连段间隔是否与擦网频率设定成整数倍关系。
+
+    容差按"偏离最近整倍数不超过 0.2 个擦网周期"计——若按倍数的百分比计,
+    倍数一大容差窗口会互相重叠,任何间隔都能"对齐"。"""
+    if not gap or not frequency or frequency <= 0:
+        return False
+    nearest = max(round(gap / frequency), 1)
+    return abs(gap - nearest * frequency) <= CLEANING_ALIGNMENT_TOLERANCE * frequency
+
+
 # Auto-check evaluators: how each auto evidence type is verified against one
 # drilldown observation. Keys are ontology evidence IDs; each returns
 # (passed, detail). Evidence whose availability is planned/not_collected never
@@ -748,6 +870,15 @@ _AUTO_CHECK_EVALUATORS = {
     ),
     "evidence.spi_metric_mismatch": lambda obs: (
         obs.get("validity") == "validity.spi_suspect", obs.get("spi_detail", ""),
+    ),
+    "evidence.cleaning_frequency_reference": lambda obs: (
+        cleaning_cycle_aligned(obs.get("periodic_gap"), obs.get("cleaning_frequency")),
+        (
+            f"NG 连段间隔约 {obs.get('periodic_gap')} 块板,与擦网频率设定 "
+            f"{obs.get('cleaning_frequency')} 成整数倍关系。"
+            if cleaning_cycle_aligned(obs.get("periodic_gap"), obs.get("cleaning_frequency"))
+            else "NG 连段间隔与擦网频率设定无整数倍关系,或缺少周期/设定数据。"
+        ),
     ),
 }
 
@@ -791,11 +922,27 @@ def root_cause_candidate_from_rule(
 ) -> dict[str, Any]:
     """Uniform root-cause candidate payload consumed by conclusions and UI.
 
-    最终置信度 = 机理先验(confidence_base) × 证据乘数;evidence_level 由
-    最终置信度分档推导。带 observation 时评估机理的自动核验证据。"""
-    confidence = round(rule.get("confidence_base", 0.5) * multiplier, 3)
+    最终置信度 = 机理先验(confidence_base) × 证据乘数 × 签名乘数,上限
+    CONFIDENCE_CAP;evidence_level 由最终置信度分档推导。带 observation 时
+    评估机理的自动核验证据并做签名甄别。"""
     mechanism = mechanism_by_id(rule.get("mechanism") or "") or {}
     props = mechanism.get("properties") or {}
+
+    signature_status = "unknown"
+    signature_detail = ""
+    if observation is not None and props.get("signature"):
+        signature_status, signature_detail = match_metric_signature(
+            props["signature"], observation.get("metric_signature") or {},
+        )
+    signature_multiplier = {
+        "matched": SIGNATURE_MATCH_MULTIPLIER,
+        "conflict": SIGNATURE_CONFLICT_MULTIPLIER,
+    }.get(signature_status, 1.0)
+
+    confidence = min(
+        round(rule.get("confidence_base", 0.5) * multiplier * signature_multiplier, 3),
+        CONFIDENCE_CAP,
+    )
     manual_checks = [concept_label(item) for item in props.get("manual_checks", [])]
     candidate = {
         "rule_id": rule["id"],
@@ -811,12 +958,25 @@ def root_cause_candidate_from_rule(
         "location": concept_label(props["element"]) if props.get("element") else None,
         "onset": props.get("onset"),
         "early_warning": props.get("early_warning") or None,
+        "signature_match": signature_status,
         "manual_checks": manual_checks or rule.get("evidence_required", []),
     }
     if observation is not None:
-        candidate["auto_checks"] = evaluate_auto_checks(
-            props.get("auto_checks", []), observation,
-        )
+        checks = evaluate_auto_checks(props.get("auto_checks", []), observation)
+        if signature_status != "unknown" and not any(
+            check["evidence_id"] == "evidence.metric_signature" for check in checks
+        ):
+            checks.append({
+                "evidence_id": "evidence.metric_signature",
+                "name": concept_label("evidence.metric_signature"),
+                "status": {
+                    "matched": "核验通过",
+                    "conflict": "不匹配",
+                    "partial": "未见",
+                }[signature_status],
+                "detail": f"{observation.get('metric_signature_text', '')}。{signature_detail}",
+            })
+        candidate["auto_checks"] = checks
     return candidate
 
 
@@ -884,15 +1044,33 @@ def _decide_spi_gate(obs: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _decide_parameter_drift(obs: dict[str, Any]) -> list[dict[str, Any]]:
-    names = "、".join(obs["drifted_parameters"][:3])
-    candidate = root_cause_candidate_from_rule(
-        PARAMETER_DRIFT_ROOT_CAUSE,
-        PARAMETER_DRIFT_ROOT_CAUSE["evidence_template"].format(parameters=names),
-        multiplier=0.8 if obs.get("cross_model_baseline") else 1.0,
-        observation=obs,
-    )
-    candidate["action"] = PARAMETER_DRIFT_ROOT_CAUSE["action_template"].format(parameters=names)
-    return [candidate]
+    """Drifted parameters are grouped by the mechanism they physically belong
+    to (脱模/刮刀/擦网); only ungrouped parameters fall back to the generic
+    parameter-drift rule."""
+    multiplier = 0.8 if obs.get("cross_model_baseline") else 1.0
+    remaining = list(obs["drifted_parameters"])
+    candidates = []
+
+    def build(rule: dict[str, Any], parameters: list[str]) -> dict[str, Any]:
+        names = "、".join(parameters[:3])
+        candidate = root_cause_candidate_from_rule(
+            rule,
+            rule["evidence_template"].format(parameters=names),
+            multiplier=multiplier,
+            observation=obs,
+        )
+        candidate["action"] = rule["action_template"].format(parameters=names)
+        return candidate
+
+    for token, rule in _PARAMETER_GROUPS:
+        group = [name for name in remaining if token in name.lower()]
+        if not group:
+            continue
+        remaining = [name for name in remaining if name not in group]
+        candidates.append(build(rule, group))
+    if remaining:
+        candidates.append(build(PARAMETER_DRIFT_ROOT_CAUSE, remaining))
+    return candidates
 
 
 def _decide_parameter_recovery(obs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -912,7 +1090,17 @@ def _decide_periodic(obs: dict[str, Any]) -> list[dict[str, Any]]:
         PERIODIC_ROOT_CAUSE["evidence_template"].format(gap=gap)
         if gap else obs.get("periodicity_detail", "")
     )
-    return [root_cause_candidate_from_rule(PERIODIC_ROOT_CAUSE, evidence, observation=obs)]
+    aligned = cleaning_cycle_aligned(gap, obs.get("cleaning_frequency"))
+    if aligned:
+        evidence += (
+            f"节拍与擦网频率设定({obs['cleaning_frequency']:g})成整数倍关系，"
+            "直接指向擦网周期。"
+        )
+    return [root_cause_candidate_from_rule(
+        PERIODIC_ROOT_CAUSE, evidence,
+        multiplier=CLEANING_ALIGNMENT_MULTIPLIER if aligned else 1.0,
+        observation=obs,
+    )]
 
 
 def _decide_scope_prior(obs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -958,7 +1146,10 @@ DECISION_RULES = [
         "id": "decide.parameter_drift",
         "order": 21,
         "when": "触发板参数实际-计划偏差超出基线",
-        "nominates": "rule.parameter_drift（跨机种基线时置信 ×0.8）",
+        "nominates": (
+            "按机理分组提名：SnapOff*→脱模不良、SQG*→刮刀、Cleaning*→擦网周期，"
+            "其余走通用 rule.parameter_drift（跨机种基线时置信 ×0.8）"
+        ),
         "applies": lambda obs: bool(obs.get("drifted_parameters")),
         "build": _decide_parameter_drift,
     },
@@ -996,6 +1187,27 @@ DECISION_RULES = [
         "nominates": "event_cause 规则组",
         "applies": lambda obs: True,
         "build": _decide_event_candidates,
+    },
+]
+
+# 调整型决策规则:不提名新候选,而是修正已提名候选的置信度。求值发生在
+# 候选构造内(与提名顺序无关),order 仅表达其在决策梯中的位置。
+ADJUSTMENT_RULES = [
+    {
+        "id": "decide.cleaning_frequency_reference",
+        "order": 31,
+        "when": "周期性成立且 NG 节拍偏离 CleaningFrequency 最近整倍数 ≤0.2 个周期",
+        "nominates": f"周期性候选置信 ×{CLEANING_ALIGNMENT_MULTIPLIER:g}",
+    },
+    {
+        "id": "decide.signature_discrimination",
+        "order": 40,
+        "when": "候选机理声明了三指标签名且观测签名可判(判界 max(3σ, 10pp))",
+        "nominates": (
+            f"签名全部匹配 ×{SIGNATURE_MATCH_MULTIPLIER:g}；方向硬冲突 "
+            f"×{SIGNATURE_CONFLICT_MULTIPLIER:g}；部分/未知不调整；"
+            f"最终置信上限 {CONFIDENCE_CAP:g}"
+        ),
     },
 ]
 
@@ -1097,7 +1309,9 @@ def rule_catalog() -> dict[str, Any]:
             "condition": rule["condition"],
             "output": output,
         })
-    for decision_rule in sorted(DECISION_RULES, key=lambda item: item["order"]):
+    for decision_rule in sorted(
+        [*DECISION_RULES, *ADJUSTMENT_RULES], key=lambda item: item["order"],
+    ):
         entries.append({
             "rule_id": decision_rule["id"],
             "rule_type": "decision",

@@ -75,6 +75,20 @@ LOCAL_AREA_MAX_SPAN_SHARE = 0.35
 # metric does not show a meaningful deviation.
 SPI_FALSE_ALARM_METRIC_THRESHOLD = 20.0
 
+# Metric-signature classification (机理甄别用): a metric reads as up/down only
+# when the trigger mean moves beyond max(3σ of the pad's baseline, 10pp).
+# The 10pp floor comes from full_excel0623 (2026-07-03): per-pad PASS-row std
+# is median 3.9–6.5pp, p90 8.1–9.6pp across the three deviation metrics, so
+# anything within ~10pp is indistinguishable from normal wobble.
+SIGNATURE_MIN_BAND_PP = 10.0
+
+# Short metric keys used in mechanism signatures (ontology) -> data fields.
+SIGNATURE_METRICS = {
+    "avdp": "comp_avdp",
+    "aadp": "comp_aadp",
+    "ahdp": "comp_ahdp",
+}
+
 
 def build_pad_points(rows: list[dict[str, Any]]) -> dict[str, list[list[dict[str, Any]]]]:
     """Per (model, pad), the pad's records over time-ordered inspections.
@@ -225,6 +239,49 @@ def analyze_change_type(
         "trigger_mean": round(trigger_mean, 2),
         "jump_ratio": round(ratio, 2) if ratio else None,
         "highlight": [0, run_length - 1],
+    }
+
+
+def analyze_metric_signature(
+    pre_points: list[dict[str, Any]],
+    trigger_points: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Classify how each of the three SPI metrics moved during the trigger
+    relative to the pad's own baseline (up/down/flat), for mechanism
+    discrimination. Metrics without enough baseline data stay unclassified."""
+    signature: dict[str, str] = {}
+    metrics: dict[str, dict[str, Any]] = {}
+    label_bits: list[str] = []
+    arrow = {"up": "↑", "down": "↓", "flat": "平"}
+    for short, field in SIGNATURE_METRICS.items():
+        baseline_values = [
+            point["values"].get(field) for point in pre_points
+            if point["values"].get(field) is not None
+        ]
+        trigger_values = [
+            point["values"].get(field) for point in trigger_points
+            if point["values"].get(field) is not None
+        ]
+        if len(baseline_values) < BASELINE_MIN_RECORDS or not trigger_values:
+            metrics[short] = {"verdict": None, "detail": "数据不足"}
+            continue
+        mean = sum(baseline_values) / len(baseline_values)
+        variance = sum((value - mean) ** 2 for value in baseline_values) / len(baseline_values)
+        band = max(SIGMA_BAND * variance ** 0.5, SIGNATURE_MIN_BAND_PP)
+        delta = sum(trigger_values) / len(trigger_values) - mean
+        verdict = "up" if delta > band else "down" if delta < -band else "flat"
+        signature[short] = verdict
+        metrics[short] = {
+            "verdict": verdict,
+            "baseline_mean": round(mean, 2),
+            "trigger_delta": round(delta, 2),
+            "band": round(band, 2),
+        }
+        label_bits.append(f"{METRIC_LABELS[field]}{arrow[verdict]}")
+    return {
+        "signature": signature,
+        "metrics": metrics,
+        "text": " ".join(label_bits) if label_bits else "基线数据不足,无法判定签名",
     }
 
 
@@ -849,6 +906,8 @@ def build_observation(
     periodicity: dict[str, Any],
     parameter_check: dict[str, Any],
     exclusions: dict[str, Any],
+    metric_signature: dict[str, Any],
+    cleaning_frequency: float | None,
 ) -> dict[str, Any]:
     """Normalize one trigger's analysis results into the observation dict the
     knowledge-base decision layer (``knowledge_base.diagnose``) consumes. All
@@ -864,6 +923,8 @@ def build_observation(
         "scope_detail": scope_classification["detail"],
         "trend_kind": change_type["kind"],
         "trend_detail": change_type["detail"],
+        "metric_signature": metric_signature["signature"],
+        "metric_signature_text": metric_signature["text"],
         "drifted_parameters": [
             item["parameter"] for item in (parameter_check.get("drifted") or [])
         ],
@@ -874,6 +935,7 @@ def build_observation(
         "periodic": bool(periodicity.get("periodic")),
         "periodic_gap": periodicity.get("mean_gap_boards"),
         "periodicity_detail": periodicity.get("detail", ""),
+        "cleaning_frequency": cleaning_frequency,
         "spi_detail": (exclusions.get("spi_false_alarm") or {}).get("detail", ""),
         "data_status": (exclusions.get("data_continuity") or {}).get("status"),
     }
@@ -899,6 +961,7 @@ def build_analysis_contract(
     context_summary: dict[str, Any],
     exclusions: dict[str, Any],
     recovery: dict[str, Any],
+    metric_signature: dict[str, Any],
     conclusion: dict[str, Any],
 ) -> dict[str, Any]:
     """The single authoritative conclusion payload for UI, chat, and closure
@@ -937,6 +1000,12 @@ def build_analysis_contract(
             "name": "趋势形态",
             "value": change_type["verdict"],
             "detail": change_type["detail"],
+        },
+        {
+            "name": "指标签名",
+            "value": metric_signature["text"],
+            "detail": "触发段三指标相对该 Pad 基线的变化方向，用于机理甄别"
+                      "（判界 max(3σ, 10pp)）。",
         },
         {
             "name": "全量 SPI 窗口",
@@ -1145,9 +1214,15 @@ def build_trigger_package(
     scope_classification = classify_scope(
         scope, context_summary, exclusion_checks, periodicity,
     )
+    metric_signature = analyze_metric_signature(pre_points, trigger_window_points)
+    cleaning_frequency = next(
+        (value for row in rows[:50]
+         for value in [as_float(row.get("cleaningfrequency"))] if value),
+        None,
+    )
     observation = build_observation(
         direction, scope_classification, change_type, recovery, periodicity,
-        parameter_check, exclusion_checks,
+        parameter_check, exclusion_checks, metric_signature, cleaning_frequency,
     )
     conclusion = diagnose(observation)
     analysis_contract = build_analysis_contract(
@@ -1170,6 +1245,7 @@ def build_trigger_package(
         context_summary=context_summary,
         exclusions=exclusion_checks,
         recovery=recovery,
+        metric_signature=metric_signature,
         conclusion=conclusion,
     )
 
