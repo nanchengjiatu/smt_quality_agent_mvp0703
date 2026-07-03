@@ -546,6 +546,7 @@ class ReportShapeTest(unittest.TestCase):
                 "scope",
                 "evidence",
                 "root_cause_candidates",
+                "decision_trace",
                 "disposition",
                 "recheck",
             },

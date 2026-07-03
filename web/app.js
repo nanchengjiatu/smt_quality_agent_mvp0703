@@ -1125,18 +1125,8 @@ function renderRulesView() {
       </section>
 
       <section class="panel">
-        <h2>② 诊断决策梯 <span class="details">order 越小越先求值,门槛类在前</span></h2>
-        <div class="ladder">
-          ${decisionRules.map((rule) => `
-            <div class="ladder-step">
-              <span class="ladder-order">${escapeHtml(String(rule.priority || ""))}</span>
-              <div>
-                <strong>${escapeHtml((rule.condition || {}).when || "")}</strong>
-                <div class="details">提名：${escapeHtml((rule.output || {}).action || "")}</div>
-              </div>
-            </div>
-          `).join("") || `<div class="empty">没有匹配的决策规则</div>`}
-        </div>
+        <h2>② 诊断决策管道 <span class="details">观测输入自左向右流经各段;每段内 order 越小越先求值</span></h2>
+        ${renderDecisionPipeline(decisionRules)}
       </section>
 
       <section class="panel">
@@ -1171,6 +1161,52 @@ function renderRulesView() {
         </div>
       </section>
     </section>
+  `;
+}
+
+const PIPELINE_ROLE_STAGES = [
+  { role: "gate", title: "门槛", note: "改变整体走向" },
+  { role: "nominate", title: "证据/先验提名", note: "产出根因候选" },
+  { role: "adjust", title: "调整", note: "只修正置信度" },
+];
+
+function renderDecisionPipeline(decisionRules) {
+  if (!decisionRules.length) {
+    return `<div class="empty">没有匹配的决策规则</div>`;
+  }
+  const stages = PIPELINE_ROLE_STAGES.map((stage) => ({
+    ...stage,
+    rules: decisionRules.filter((rule) => rule.role === stage.role),
+  }));
+  const tailStages = [
+    { title: "排序 · 去重 · 取前3", note: "按最终置信度排序,同根因保留最高者", rules: null },
+    { title: "处置分级", note: "见 ④ 处置策略阶梯", rules: null },
+  ];
+  const renderStage = (stage) => `
+    <div class="pipe-stage ${stage.rules ? "" : "pipe-stage-fixed"}">
+      <div class="pipe-stage-head">
+        <strong>${escapeHtml(stage.title)}</strong>
+        <span class="details">${escapeHtml(stage.note)}</span>
+      </div>
+      ${stage.rules ? stage.rules.map((rule) => `
+        <div class="pipe-rule" title="${escapeHtml((rule.output || {}).action || "")}">
+          <span class="ladder-order">${escapeHtml(String(rule.priority || ""))}</span>
+          <div>
+            <strong>${escapeHtml(rule.label || rule.rule_id)}</strong>
+            <div class="details">${escapeHtml((rule.condition || {}).when || "")}</div>
+          </div>
+        </div>
+      `).join("") || `<div class="details">（无匹配规则）</div>` : ""}
+    </div>
+  `;
+  return `
+    <div class="pipeline">
+      <div class="pipe-input">观测<br>输入</div>
+      <span class="pipe-arrow">→</span>
+      ${[...stages.map(renderStage), ...tailStages.map(renderStage)]
+        .join(`<span class="pipe-arrow">→</span>`)}
+    </div>
+    <p class="details">下钻页每个触发的「诊断轨迹」折叠区记录本管道对该次触发的逐条求值结果(命中/未命中、置信算式、落选原因)。</p>
   `;
 }
 

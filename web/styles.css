@@ -554,6 +554,146 @@ tr:last-child td {
   color: var(--accent-dark);
 }
 
+/* -- 诊断决策管道 ------------------------------------------------------- */
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 0 8px;
+}
+
+.pipe-input {
+  flex: none;
+  align-self: center;
+  padding: 12px 10px;
+  border-radius: 8px;
+  background: #17202b;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.pipe-arrow {
+  align-self: center;
+  color: var(--muted);
+  font-size: 18px;
+  flex: none;
+}
+
+.pipe-stage {
+  flex: 1;
+  min-width: 170px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.pipe-stage-fixed {
+  min-width: 130px;
+  background: #eef2f6;
+  align-content: center;
+  text-align: center;
+}
+
+.pipe-stage-head strong {
+  display: block;
+  font-size: 13px;
+}
+
+.pipe-rule {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.pipe-rule .ladder-order {
+  min-width: 52px;
+  font-size: 11px;
+}
+
+/* -- 下钻诊断轨迹 ------------------------------------------------------- */
+.dd-trace {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.dd-trace summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.dd-trace-body {
+  padding: 4px 12px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.dd-trace-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.dd-trace-step.missed {
+  opacity: 0.62;
+}
+
+.dd-trace-mark {
+  flex: none;
+  width: 20px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.dd-trace-step.fired .dd-trace-mark { color: var(--ok); }
+.dd-trace-step.missed .dd-trace-mark { color: var(--muted); }
+
+.dd-trace-main {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.dd-trace-nominee em {
+  font-style: normal;
+  color: var(--accent-dark);
+  font-weight: 600;
+  margin: 0 6px;
+}
+
+.dd-trace-tail {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--line);
+  font-size: 13px;
+}
+
+.dd-trace-tail ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 /* -- 本体分层图 -------------------------------------------------------- */
 .onto-layout {
   display: flex;

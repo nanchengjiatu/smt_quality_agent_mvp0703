@@ -1094,6 +1094,7 @@ def build_analysis_contract(
             "tags": evidence_tags,
         },
         "root_cause_candidates": assessments,
+        "decision_trace": conclusion["decision_trace"],
         "disposition": {
             "priority": disposition["priority"],
             "suggestion": disposition["disposition"],

@@ -141,6 +141,49 @@ function renderAgentEvidence(trigger) {
   `;
 }
 
+function renderDecisionTrace(trigger) {
+  const trace = ((trigger.analysis_contract || {}).decision_trace) || {};
+  const steps = trace.steps || [];
+  if (!steps.length) {
+    return "";
+  }
+  const eliminated = trace.eliminated || [];
+  return `
+    <details class="dd-trace">
+      <summary>诊断轨迹 <span class="details">决策梯对本次触发的逐条求值记录（可审计）</span></summary>
+      <div class="dd-trace-body">
+        ${steps.map((step) => `
+          <div class="dd-trace-step ${step.fired ? "fired" : "missed"}">
+            <span class="dd-trace-mark">${step.fired ? "✓" : "✗"}</span>
+            <div class="dd-trace-main">
+              <strong>order ${escapeHtml(step.order)} · ${escapeHtml(step.label)}</strong>
+              <span class="details">${escapeHtml(step.when)}</span>
+              ${step.fired
+                ? (step.nominated || []).map((item) => `
+                    <div class="dd-trace-nominee">
+                      → ${escapeHtml(item.cause)}
+                      <em>${escapeHtml(item.formula)}</em>
+                      <span class="details">${escapeHtml(item.rule_id)}</span>
+                    </div>
+                  `).join("") || `<div class="details">命中但未产出候选</div>`
+                : ""}
+            </div>
+          </div>
+        `).join("")}
+        <div class="dd-trace-tail">
+          <strong>排序 · 同根因去重 · 取前 3</strong>
+          ${eliminated.length ? `
+            <ul>
+              ${eliminated.map((item) => `
+                <li>落选：${escapeHtml(item.cause)}（置信 ${escapeHtml(String(item.confidence))}） — ${escapeHtml(item.reason)}</li>
+              `).join("")}
+            </ul>` : `<div class="details">全部提名候选均进入前 3。</div>`}
+        </div>
+      </div>
+    </details>
+  `;
+}
+
 function renderChatMessages() {
   const messages = drilldownState.chatMessages || [];
   if (!messages.length) {
@@ -330,7 +373,7 @@ function renderDrilldown() {
               ? rootCauseCandidates.map((item) => `
                 <li>
                   <strong>${item.priority}. ${escapeHtml(item.cause)}</strong>
-                  <span class="badge risk-${escapeHtml(item.evidence_level || "中")}">置信 ${escapeHtml(item.confidence != null ? Math.round(item.confidence * 100) + "%" : item.evidence_level || "中")}</span>
+                  <span class="badge risk-${escapeHtml(item.evidence_level || "中")}" title="${escapeHtml(item.confidence_formula || "")}">置信 ${escapeHtml(item.confidence != null ? Math.round(item.confidence * 100) + "%" : item.evidence_level || "中")}</span>
                   ${item.mechanism ? `<span class="details">机理：${escapeHtml(item.mechanism)}${item.location ? `（${escapeHtml(item.location)}）` : ""}</span>` : ""}
                   <span class="details">规则：${escapeHtml(item.rule_id || "rule.unspecified")}</span>
                   <span class="details"> — 依据：${escapeHtml(item.evidence || "待现场确认")}</span><br>
@@ -345,6 +388,7 @@ function renderDrilldown() {
               `).join("")
               : `<li class="details">当前事件没有可用的根因候选。</li>`}
           </ul>
+          ${renderDecisionTrace(trigger)}
         </section>
       </div>
       <aside class="dd-chat panel">

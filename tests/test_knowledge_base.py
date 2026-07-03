@@ -137,6 +137,44 @@ class DecisionLayerTest(unittest.TestCase):
                          list(range(1, len(assessments) + 1)))
 
 
+class DecisionTraceTest(unittest.TestCase):
+    def test_trace_records_every_step_in_order_including_misses(self) -> None:
+        result = diagnose(sample_observation())
+        steps = result["decision_trace"]["steps"]
+        self.assertEqual(len(steps), len(DECISION_RULES))
+        self.assertEqual([step["order"] for step in steps],
+                         sorted(step["order"] for step in steps))
+        spi_gate = next(step for step in steps if step["id"] == "decide.spi_false_alarm_gate")
+        self.assertFalse(spi_gate["fired"])
+        self.assertEqual(spi_gate["nominated"], [])
+        scope_step = next(step for step in steps if step["id"] == "decide.scope_prior")
+        self.assertTrue(scope_step["fired"])
+        self.assertTrue(scope_step["nominated"][0]["formula"])
+
+    def test_formula_shows_multiplier_breakdown(self) -> None:
+        result = diagnose(sample_observation(
+            drifted_parameters=["printspeed"], cross_model_baseline=True,
+        ))
+        drift_step = next(
+            step for step in result["decision_trace"]["steps"]
+            if step["id"] == "decide.parameter_drift"
+        )
+        self.assertIn("0.8(跨机种基线)", drift_step["nominated"][0]["formula"])
+        self.assertIn("= 0.6", drift_step["nominated"][0]["formula"])
+
+    def test_eliminated_candidates_carry_reasons(self) -> None:
+        result = diagnose(sample_observation())
+        nominated_total = sum(
+            len(step["nominated"]) for step in result["decision_trace"]["steps"]
+        )
+        eliminated = result["decision_trace"]["eliminated"]
+        self.assertEqual(
+            nominated_total,
+            len(result["root_cause_assessment"]) + len(eliminated),
+        )
+        self.assertTrue(all(item["reason"] for item in eliminated))
+
+
 class SignatureMatchTest(unittest.TestCase):
     def test_full_match_needs_two_evaluated_metrics(self) -> None:
         status, _ = match_metric_signature(

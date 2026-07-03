@@ -919,12 +919,14 @@ def root_cause_candidate_from_rule(
     evidence: str | None = None,
     multiplier: float = 1.0,
     observation: dict[str, Any] | None = None,
+    multiplier_label: str = "证据乘数",
 ) -> dict[str, Any]:
     """Uniform root-cause candidate payload consumed by conclusions and UI.
 
     最终置信度 = 机理先验(confidence_base) × 证据乘数 × 签名乘数,上限
-    CONFIDENCE_CAP;evidence_level 由最终置信度分档推导。带 observation 时
-    评估机理的自动核验证据并做签名甄别。"""
+    CONFIDENCE_CAP;evidence_level 由最终置信度分档推导;算式因子记录在
+    confidence_factors/confidence_formula 供诊断轨迹与 UI 展示。带
+    observation 时评估机理的自动核验证据并做签名甄别。"""
     mechanism = mechanism_by_id(rule.get("mechanism") or "") or {}
     props = mechanism.get("properties") or {}
 
@@ -939,10 +941,25 @@ def root_cause_candidate_from_rule(
         "conflict": SIGNATURE_CONFLICT_MULTIPLIER,
     }.get(signature_status, 1.0)
 
-    confidence = min(
-        round(rule.get("confidence_base", 0.5) * multiplier * signature_multiplier, 3),
-        CONFIDENCE_CAP,
+    base = rule.get("confidence_base", 0.5)
+    factors = [{"label": "先验", "value": base}]
+    if multiplier != 1.0:
+        factors.append({"label": multiplier_label, "value": multiplier})
+    if signature_multiplier != 1.0:
+        factors.append({
+            "label": "签名匹配" if signature_status == "matched" else "签名冲突",
+            "value": signature_multiplier,
+        })
+    raw = round(base * multiplier * signature_multiplier, 3)
+    confidence = min(raw, CONFIDENCE_CAP)
+    formula = " × ".join(
+        f"{item['value']:g}({item['label']})" if index else f"{item['value']:g}"
+        for index, item in enumerate(factors)
     )
+    if len(factors) > 1:
+        formula += f" = {confidence:g}"
+        if raw > CONFIDENCE_CAP:
+            formula += f"（上限 {CONFIDENCE_CAP:g}）"
     manual_checks = [concept_label(item) for item in props.get("manual_checks", [])]
     candidate = {
         "rule_id": rule["id"],
@@ -950,8 +967,10 @@ def root_cause_candidate_from_rule(
         "cause": rule["cause"],
         "evidence": evidence or rule.get("evidence", ""),
         "action": rule.get("action") or rule.get("action_template", ""),
-        "confidence_base": rule.get("confidence_base", 0.5),
+        "confidence_base": base,
         "confidence": confidence,
+        "confidence_factors": factors,
+        "confidence_formula": formula,
         "evidence_level": confidence_level(confidence),
         "mechanism_id": rule.get("mechanism"),
         "mechanism": mechanism.get("label"),
@@ -1058,6 +1077,7 @@ def _decide_parameter_drift(obs: dict[str, Any]) -> list[dict[str, Any]]:
             rule["evidence_template"].format(parameters=names),
             multiplier=multiplier,
             observation=obs,
+            multiplier_label="跨机种基线",
         )
         candidate["action"] = rule["action_template"].format(parameters=names)
         return candidate
@@ -1100,6 +1120,7 @@ def _decide_periodic(obs: dict[str, Any]) -> list[dict[str, Any]]:
         PERIODIC_ROOT_CAUSE, evidence,
         multiplier=CLEANING_ALIGNMENT_MULTIPLIER if aligned else 1.0,
         observation=obs,
+        multiplier_label="擦网频率对齐",
     )]
 
 
@@ -1126,6 +1147,8 @@ def _decide_event_candidates(obs: dict[str, Any]) -> list[dict[str, Any]]:
 DECISION_RULES = [
     {
         "id": "decide.spi_false_alarm_gate",
+        "label": "SPI误判门槛",
+        "role": "gate",
         "order": 10,
         "when": "数据有效性 = 疑似SPI误判",
         "nominates": "rule.spi_false_alarm_review（先排除假异常再谈物理机理）",
@@ -1134,6 +1157,8 @@ DECISION_RULES = [
     },
     {
         "id": "decide.parameter_recovery",
+        "label": "参数恢复",
+        "role": "nominate",
         "order": 20,
         "when": "触发后恢复且恢复前有程序设定变更",
         "nominates": "rule.parameter_recovery（时序证据直接支持）",
@@ -1144,6 +1169,8 @@ DECISION_RULES = [
     },
     {
         "id": "decide.parameter_drift",
+        "label": "参数漂移(分组)",
+        "role": "nominate",
         "order": 21,
         "when": "触发板参数实际-计划偏差超出基线",
         "nominates": (
@@ -1155,6 +1182,8 @@ DECISION_RULES = [
     },
     {
         "id": "decide.periodic_recurrence",
+        "label": "周期性",
+        "role": "nominate",
         "order": 30,
         "when": "NG 连段呈固定节拍复发",
         "nominates": "rule.periodic_maintenance_cycle",
@@ -1163,6 +1192,8 @@ DECISION_RULES = [
     },
     {
         "id": "decide.scope_prior",
+        "label": "范围先验",
+        "role": "nominate",
         "order": 50,
         "when": "空间范围与缺陷方向组合(疑似SPI误判时跳过)",
         "nominates": "scope_root_cause 规则组",
@@ -1171,6 +1202,8 @@ DECISION_RULES = [
     },
     {
         "id": "decide.trend_shape",
+        "label": "趋势归因",
+        "role": "nominate",
         "order": 60,
         "when": "趋势形态可判(突变且已有参数漂移证据时跳过,避免重复归因)",
         "nominates": "trend_root_cause 规则组(不绑定机理,仅形态归因)",
@@ -1182,6 +1215,8 @@ DECISION_RULES = [
     },
     {
         "id": "decide.event_candidates",
+        "label": "事件候选",
+        "role": "nominate",
         "order": 70,
         "when": "按方向与事件分组轴补充候选(无直接佐证)",
         "nominates": "event_cause 规则组",
@@ -1195,12 +1230,16 @@ DECISION_RULES = [
 ADJUSTMENT_RULES = [
     {
         "id": "decide.cleaning_frequency_reference",
+        "label": "擦网频率对齐",
+        "role": "adjust",
         "order": 31,
         "when": "周期性成立且 NG 节拍偏离 CleaningFrequency 最近整倍数 ≤0.2 个周期",
         "nominates": f"周期性候选置信 ×{CLEANING_ALIGNMENT_MULTIPLIER:g}",
     },
     {
         "id": "decide.signature_discrimination",
+        "label": "签名甄别",
+        "role": "adjust",
         "order": 40,
         "when": "候选机理声明了三指标签名且观测签名可判(判界 max(3σ, 10pp))",
         "nominates": (
@@ -1215,29 +1254,74 @@ ADJUSTMENT_RULES = [
 def diagnose(observation: dict[str, Any]) -> dict[str, Any]:
     """Run the decision-rule ladder over one drilldown observation.
 
-    Returns the ranked root-cause assessment: candidates sorted by final
-    confidence (stable within ties), deduplicated by cause, capped at 3,
-    with ontology IDs attached and an overall confidence grade."""
+    Returns the ranked root-cause assessment (candidates sorted by final
+    confidence, deduplicated by cause, capped at 3, ontology IDs attached,
+    overall confidence grade) plus a decision_trace — the audit trail of
+    which decision rules fired, what they nominated with the confidence
+    math, and which candidates were eliminated and why."""
     candidates: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
     for decision_rule in sorted(DECISION_RULES, key=lambda item: item["order"]):
-        if decision_rule["applies"](observation):
+        fired = bool(decision_rule["applies"](observation))
+        nominated = []
+        if fired:
             for candidate in decision_rule["build"](observation):
                 candidate["decided_by"] = decision_rule["id"]
                 candidates.append(candidate)
+                nominated.append({
+                    "cause": candidate["cause"],
+                    "rule_id": candidate["rule_id"],
+                    "confidence": candidate["confidence"],
+                    "formula": candidate["confidence_formula"],
+                })
+        steps.append({
+            "id": decision_rule["id"],
+            "label": decision_rule["label"],
+            "order": decision_rule["order"],
+            "when": decision_rule["when"],
+            "fired": fired,
+            "nominated": nominated,
+        })
 
     if not candidates:
         fallback = root_cause_candidate_from_rule(FALLBACK_ROOT_CAUSE, observation=observation)
         fallback["decided_by"] = "decide.fallback"
         candidates.append(fallback)
+        steps.append({
+            "id": "decide.fallback",
+            "label": "未定机理兜底",
+            "order": 90,
+            "when": "以上决策规则均未提名任何候选",
+            "fired": True,
+            "nominated": [{
+                "cause": fallback["cause"],
+                "rule_id": fallback["rule_id"],
+                "confidence": fallback["confidence"],
+                "formula": fallback["confidence_formula"],
+            }],
+        })
 
     candidates.sort(key=lambda item: -item["confidence"])
     assessments: list[dict[str, Any]] = []
+    eliminated: list[dict[str, Any]] = []
     for candidate in candidates:
         if candidate["cause"] in {item["cause"] for item in assessments}:
+            eliminated.append({
+                "cause": candidate["cause"],
+                "rule_id": candidate["rule_id"],
+                "confidence": candidate["confidence"],
+                "reason": "同根因去重（保留更高置信候选）",
+            })
+            continue
+        if len(assessments) >= 3:
+            eliminated.append({
+                "cause": candidate["cause"],
+                "rule_id": candidate["rule_id"],
+                "confidence": candidate["confidence"],
+                "reason": "排序后未进前 3",
+            })
             continue
         assessments.append(candidate)
-        if len(assessments) >= 3:
-            break
 
     for priority, item in enumerate(assessments, 1):
         item["priority"] = priority
@@ -1259,6 +1343,10 @@ def diagnose(observation: dict[str, Any]) -> dict[str, Any]:
         "confidence": confidence,
         "root_cause_assessment": assessments,
         "recheck_plan": RECHECK_CRITERIA,
+        "decision_trace": {
+            "steps": steps,
+            "eliminated": eliminated,
+        },
     }
 
 
@@ -1317,6 +1405,8 @@ def rule_catalog() -> dict[str, Any]:
             "rule_type": "decision",
             "source": "knowledge_base.decision_rules",
             "priority": f"order {decision_rule['order']}",
+            "label": decision_rule["label"],
+            "role": decision_rule["role"],
             "condition": {"when": decision_rule["when"]},
             "output": {
                 "action": decision_rule["nominates"],
