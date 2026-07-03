@@ -554,6 +554,216 @@ tr:last-child td {
   color: var(--accent-dark);
 }
 
+/* -- 本体分层图 -------------------------------------------------------- */
+.onto-layout {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.onto-graph-wrap {
+  flex: 1;
+  min-width: 640px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.onto-detail {
+  flex: none;
+  width: 300px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.onto-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.onto-rule-links {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.onto-rule-links li {
+  margin-bottom: 6px;
+}
+
+.onto-col-title {
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--muted);
+}
+
+.onto-node {
+  cursor: pointer;
+}
+
+.onto-node rect {
+  stroke-width: 1;
+}
+
+.onto-node text {
+  font-size: 12px;
+  fill: var(--text);
+  pointer-events: none;
+}
+
+.onto-mech rect {
+  fill: #e6f4f1;
+  stroke: var(--accent);
+}
+
+.onto-entity rect {
+  fill: #eef2f6;
+  stroke: #98a2b3;
+}
+
+.onto-node.ev-available rect {
+  fill: #ecfdf3;
+  stroke: #6ce9a6;
+}
+
+.onto-node.ev-planned rect {
+  fill: #fffaeb;
+  stroke: #fedf89;
+}
+
+.onto-node.ev-not_collected rect {
+  fill: #f2f4f7;
+  stroke: #98a2b3;
+  stroke-dasharray: 4 3;
+}
+
+.onto-node.ev-manual rect {
+  fill: #fff;
+  stroke: var(--line);
+}
+
+.onto-node.selected rect {
+  stroke-width: 2.5;
+  stroke: #17202b;
+}
+
+.onto-node.dim {
+  opacity: 0.18;
+}
+
+.onto-edge {
+  fill: none;
+  stroke-width: 1.4;
+  opacity: 0.55;
+}
+
+.onto-edge.dim {
+  opacity: 0.06;
+}
+
+.onto-edge-stage {
+  stroke: #cbd5e1;
+}
+
+.onto-edge-element {
+  stroke: #98a2b3;
+}
+
+.onto-edge-auto {
+  stroke: var(--ok);
+}
+
+.onto-edge-manual {
+  stroke: #b8c0cc;
+  stroke-dasharray: 5 4;
+}
+
+.onto-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.onto-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.onto-swatch {
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  display: inline-block;
+}
+
+.sw-mech { background: #e6f4f1; border-color: var(--accent); }
+.sw-entity { background: #eef2f6; border-color: #98a2b3; }
+.sw-available { background: #ecfdf3; border-color: #6ce9a6; }
+.sw-planned { background: #fffaeb; border-color: #fedf89; }
+.sw-missing { background: #f2f4f7; border-color: #98a2b3; border-style: dashed; }
+.sw-manual { background: #fff; }
+
+.onto-line {
+  width: 18px;
+  height: 0;
+  border-top: 2px solid var(--ok);
+  display: inline-block;
+}
+
+.onto-line.line-manual {
+  border-top-style: dashed;
+  border-top-color: #b8c0cc;
+}
+
+.onto-axes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.onto-axis-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.onto-axis-group em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .onto-layout {
+    flex-direction: column;
+  }
+  .onto-graph-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+  .onto-detail {
+    width: 100%;
+  }
+}
+
 .rules-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);

@@ -11,6 +11,7 @@ const API_REFRESH = "/api/refresh";
 const API_LIVE = "/api/live";
 const API_DATASOURCE = "/api/datasource";
 const API_RULES = "/api/rules";
+const API_ONTOLOGY = "/api/ontology";
 const LIVE_POLL_MS = 4000;
 
 const state = {
@@ -108,7 +109,7 @@ async function loadData(meta) {
     dataStatus.textContent = "加载数据中...";
   }
   try {
-    const [abnormals, cases, summary, top, analysis, drilldown, rules] = await Promise.all([
+    const [abnormals, cases, summary, top, analysis, drilldown, rules, ontology] = await Promise.all([
       fetchJson(DATA_PATHS.abnormals),
       fetchJson(DATA_PATHS.cases),
       fetchJson(DATA_PATHS.summary),
@@ -116,6 +117,7 @@ async function loadData(meta) {
       fetchJson(DATA_PATHS.analysis).catch(() => null),
       fetchJson(DATA_PATHS.drilldown).catch(() => null),
       fetchJson(API_RULES).catch(() => null),
+      fetchJson(API_ONTOLOGY).catch(() => null),
     ]);
 
     // Work out deltas and newly-added abnormals before overwriting state.
@@ -134,6 +136,7 @@ async function loadData(meta) {
     state.analysis = analysis;
     state.drilldown = drilldown;
     state.rules = rules;
+    state.ontology = ontology;
     dataStatus.textContent = composeStatus(meta, abnormals, cases);
     render();
 
@@ -788,6 +791,22 @@ function renderDrilldownDecisionCard(trigger) {
 }
 
 viewRoot.addEventListener("click", (event) => {
+  const ontoNode = event.target.closest("[data-node]");
+  if (ontoNode) {
+    const id = ontoNode.dataset.node;
+    state.ontologyNode = state.ontologyNode === id ? null : id;
+    render();
+    return;
+  }
+  if (event.target.closest(".onto-svg")) {
+    // 点击图内空白处取消选中
+    if (state.ontologyNode) {
+      state.ontologyNode = null;
+      render();
+    }
+    return;
+  }
+
   const ruleType = event.target.closest("[data-rule-type]");
   if (ruleType) {
     state.ruleType = ruleType.dataset.ruleType || "";
@@ -812,6 +831,207 @@ const ONSET_LABELS = {
   periodic: "周期",
   any: "不定",
 };
+
+const CONCEPT_TYPE_LABELS = {
+  ProcessStage: "工序阶段",
+  EquipmentElement: "设备要素",
+  Material: "物料",
+  FailureMechanism: "失效机理",
+  EvidenceType: "证据",
+  SpatialExtent: "空间范围",
+  TemporalPattern: "时间模式",
+  DataValidity: "数据有效性",
+  RootCauseCandidate: "根因候选",
+  Disposition: "处置方式",
+  AbnormalScope: "范围(v2,已废弃)",
+};
+
+// 本体分层关系图:实体(阶段/部位) ← 机理 → 证据。手写 SVG,零依赖。
+function buildOntologyGraph(ontology) {
+  const concepts = (ontology || {}).concepts || [];
+  const byId = new Map(concepts.map((item) => [item.id, item]));
+  const mechanisms = concepts.filter((item) => item.type === "FailureMechanism");
+  const stages = concepts.filter((item) => item.type === "ProcessStage");
+  const elements = concepts.filter(
+    (item) => item.type === "EquipmentElement" || item.type === "Material",
+  );
+  const evidenceIds = [];
+  mechanisms.forEach((mech) => {
+    const props = mech.properties || {};
+    [...(props.auto_checks || []), ...(props.manual_checks || [])].forEach((id) => {
+      if (!evidenceIds.includes(id)) {
+        evidenceIds.push(id);
+      }
+    });
+  });
+  const evidence = evidenceIds.map((id) => byId.get(id)).filter(Boolean);
+
+  const edges = [];
+  mechanisms.forEach((mech) => {
+    const props = mech.properties || {};
+    if (props.stage) {
+      edges.push({ from: props.stage, to: mech.id, kind: "stage" });
+    }
+    if (props.element) {
+      edges.push({ from: props.element, to: mech.id, kind: "element" });
+    }
+    (props.auto_checks || []).forEach((id) => edges.push({ from: mech.id, to: id, kind: "auto" }));
+    (props.manual_checks || []).forEach((id) => edges.push({ from: mech.id, to: id, kind: "manual" }));
+  });
+
+  return { byId, edges, columns: [
+    { title: "工序阶段", x: 14, w: 108, nodes: stages },
+    { title: "部位/物料", x: 168, w: 138, nodes: elements },
+    { title: "失效机理", x: 372, w: 200, nodes: mechanisms },
+    { title: "证据(自动/人工)", x: 658, w: 282, nodes: evidence },
+  ] };
+}
+
+function ontologyNeighborhood(graph, selectedId) {
+  if (!selectedId) {
+    return null;
+  }
+  const nodes = new Set([selectedId]);
+  const edges = new Set();
+  graph.edges.forEach((edge, index) => {
+    if (edge.from === selectedId || edge.to === selectedId) {
+      edges.add(index);
+      nodes.add(edge.from);
+      nodes.add(edge.to);
+    }
+  });
+  return { nodes, edges };
+}
+
+function evidenceNodeClass(concept) {
+  const props = concept.properties || {};
+  if (props.verification === "manual") {
+    return "ev-manual";
+  }
+  return `ev-${props.availability || "available"}`;
+}
+
+function renderOntologyGraph(graph, selectedId) {
+  const W = 954;
+  const rowH = 31;
+  const maxRows = Math.max(...graph.columns.map((column) => column.nodes.length));
+  const H = maxRows * rowH + 58;
+  const positions = new Map();
+
+  graph.columns.forEach((column) => {
+    const step = (H - 46) / column.nodes.length;
+    column.nodes.forEach((node, index) => {
+      positions.set(node.id, {
+        x: column.x,
+        y: 38 + step * index + step / 2,
+        w: column.w,
+      });
+    });
+  });
+
+  const highlight = ontologyNeighborhood(graph, selectedId);
+  const parts = [];
+
+  graph.columns.forEach((column) => {
+    parts.push(`<text x="${column.x + column.w / 2}" y="20" class="onto-col-title" text-anchor="middle">${escapeHtml(column.title)}</text>`);
+  });
+
+  graph.edges.forEach((edge, index) => {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    if (!from || !to) {
+      return;
+    }
+    const x1 = from.x + from.w;
+    const x2 = to.x;
+    const mid = (x1 + x2) / 2;
+    const dim = highlight && !highlight.edges.has(index) ? " dim" : "";
+    parts.push(`<path d="M${x1},${from.y} C${mid},${from.y} ${mid},${to.y} ${x2},${to.y}"
+      class="onto-edge onto-edge-${edge.kind}${dim}"/>`);
+  });
+
+  graph.columns.forEach((column) => {
+    column.nodes.forEach((node) => {
+      const pos = positions.get(node.id);
+      const classes = ["onto-node"];
+      if (node.type === "FailureMechanism") {
+        classes.push("onto-mech");
+      } else if (node.type === "EvidenceType") {
+        classes.push(evidenceNodeClass(node));
+      } else {
+        classes.push("onto-entity");
+      }
+      if (selectedId === node.id) {
+        classes.push("selected");
+      } else if (highlight && !highlight.nodes.has(node.id)) {
+        classes.push("dim");
+      }
+      parts.push(`<g class="${classes.join(" ")}" data-node="${escapeHtml(node.id)}">
+        <rect x="${pos.x}" y="${pos.y - 12}" width="${pos.w}" height="24" rx="6"/>
+        <text x="${pos.x + pos.w / 2}" y="${pos.y + 4}" text-anchor="middle">${escapeHtml(node.label)}</text>
+        <title>${escapeHtml(node.label)}（${escapeHtml(CONCEPT_TYPE_LABELS[node.type] || node.type)}）
+${escapeHtml(node.description || "")}</title>
+      </g>`);
+    });
+  });
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" class="onto-svg">${parts.join("")}</svg>`;
+}
+
+function renderOntologyDetail(graph, selectedId) {
+  if (!selectedId || !graph.byId.has(selectedId)) {
+    return `
+      <div class="details">点击图中任意节点查看定义、关联与绑定规则；再次点击取消。</div>
+      <div class="onto-legend">
+        <span><i class="onto-swatch sw-mech"></i>机理</span>
+        <span><i class="onto-swatch sw-entity"></i>阶段/部位</span>
+        <span><i class="onto-swatch sw-available"></i>证据·已实现</span>
+        <span><i class="onto-swatch sw-planned"></i>证据·待实现</span>
+        <span><i class="onto-swatch sw-missing"></i>证据·数据未采集</span>
+        <span><i class="onto-swatch sw-manual"></i>证据·需人工</span>
+        <span><i class="onto-line line-auto"></i>自动核验</span>
+        <span><i class="onto-line line-manual"></i>人工确认</span>
+      </div>
+    `;
+  }
+  const concept = graph.byId.get(selectedId);
+  const props = concept.properties || {};
+  const lines = [];
+  if (concept.type === "FailureMechanism") {
+    if (props.direction) lines.push(`方向：${props.direction}`);
+    if (props.onset) lines.push(`起病：${ONSET_LABELS[props.onset] || props.onset}`);
+    if (props.signature_text) lines.push(`签名：${props.signature_text}`);
+    if (props.early_warning) lines.push(`预警：${props.early_warning}`);
+  }
+  if (concept.type === "EvidenceType") {
+    lines.push(props.verification === "manual"
+      ? "核验方式：现场人工确认"
+      : `核验方式：自动 · ${AVAILABILITY_LABELS[props.availability] || props.availability || ""}`);
+  }
+  const boundRules = concept.type === "FailureMechanism"
+    ? ((state.rules || {}).rules || []).filter(
+        (rule) => (rule.output || {}).mechanism_id === selectedId,
+      )
+    : [];
+  return `
+    <div class="onto-detail-head">
+      <strong>${escapeHtml(concept.label)}</strong>
+      <span class="badge">${escapeHtml(CONCEPT_TYPE_LABELS[concept.type] || concept.type)}</span>
+      <span class="details">${escapeHtml(concept.id)}</span>
+    </div>
+    <p class="details">${escapeHtml(concept.description || "")}</p>
+    ${lines.length ? `<p class="details">${lines.map(escapeHtml).join("<br>")}</p>` : ""}
+    ${concept.type === "FailureMechanism" ? `
+      <div class="details"><strong>绑定规则（${boundRules.length}）</strong></div>
+      <ul class="onto-rule-links">
+        ${boundRules.map((rule) => `
+          <li><a href="#mech-${escapeHtml(selectedId)}">${escapeHtml(rule.rule_id)}</a>
+            <span class="details">${escapeHtml((rule.output || {}).cause || "")}
+            （先验 ${Math.round(((rule.output || {}).confidence_base || 0) * 100)}%）</span></li>
+        `).join("") || `<li class="details">暂无绑定规则（第二阶段接入）</li>`}
+      </ul>` : ""}
+  `;
+}
 
 const AVAILABILITY_LABELS = {
   available: "已实现",
@@ -861,22 +1081,51 @@ function renderRulesView() {
   const shownCount = decisionRules.length + dispositionRules.length + unboundRules.length
     + mechanismCards.reduce((sum, card) => sum + card.rules.length, 0);
 
+  const graph = buildOntologyGraph(state.ontology);
+  const axes = ((state.ontology || {}).concepts || []).filter((item) =>
+    ["SpatialExtent", "TemporalPattern", "DataValidity"].includes(item.type));
+
   viewRoot.innerHTML = `
     <section class="rules-view">
       <div class="rules-head">
         <div>
-          <h2>规则/知识库</h2>
+          <h2>本体/知识库</h2>
           <p class="details">
-            ${escapeHtml(catalog.version || "")} · ${escapeHtml(catalog.focus || "")} ·
-            浏览动线：<strong>诊断决策梯</strong>(什么条件先怀疑什么) →
-            <strong>机理目录</strong>(每个机理的证据与规则) → <strong>处置策略</strong>
+            ${escapeHtml(((state.ontology || {}).version) || "")} · ${escapeHtml(catalog.version || "")} ·
+            浏览动线：<strong>本体分层图</strong>(实体←机理→证据) →
+            <strong>诊断决策梯</strong> → <strong>机理与规则明细</strong> → <strong>处置策略</strong>
           </p>
         </div>
         <div class="rules-count">${shownCount} / ${rules.length}</div>
       </div>
 
       <section class="panel">
-        <h2>① 诊断决策梯 <span class="details">order 越小越先求值,门槛类在前</span></h2>
+        <h2>① 本体分层图
+          <span class="details">工序阶段/部位 ← 失效机理 → 证据 · 点击节点联动高亮</span>
+        </h2>
+        <div class="onto-layout">
+          <div class="onto-graph-wrap">
+            ${state.ontology ? renderOntologyGraph(graph, state.ontologyNode) : `<div class="empty">本体数据加载失败，请确认 /api/ontology 可访问。</div>`}
+          </div>
+          <aside class="onto-detail" id="ontoDetail">
+            ${renderOntologyDetail(graph, state.ontologyNode)}
+          </aside>
+        </div>
+        <div class="onto-axes">
+          <span class="details">三个正交判定轴：</span>
+          ${["SpatialExtent", "TemporalPattern", "DataValidity"].map((type) => `
+            <span class="onto-axis-group">
+              <em>${escapeHtml(CONCEPT_TYPE_LABELS[type])}</em>
+              ${axes.filter((item) => item.type === type).map((item) => `
+                <span class="check-chip" title="${escapeHtml(item.description || "")}">${escapeHtml(item.label)}</span>
+              `).join("")}
+            </span>
+          `).join("")}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>② 诊断决策梯 <span class="details">order 越小越先求值,门槛类在前</span></h2>
         <div class="ladder">
           ${decisionRules.map((rule) => `
             <div class="ladder-step">
@@ -891,7 +1140,7 @@ function renderRulesView() {
       </section>
 
       <section class="panel">
-        <h2>② 机理目录与规则 <span class="details">${(catalog.mechanisms || []).length} 个失效机理 · 规则按其绑定的机理分组</span></h2>
+        <h2>③ 机理目录与规则 <span class="details">${(catalog.mechanisms || []).length} 个失效机理 · 规则按其绑定的机理分组</span></h2>
         <div class="mech-list">
           ${mechanismCards.map(renderMechanismCard).join("")}
           ${unboundRules.length ? `
@@ -908,7 +1157,7 @@ function renderRulesView() {
       </section>
 
       <section class="panel">
-        <h2>③ 处置策略 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
+        <h2>④ 处置策略 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
         <div class="ladder">
           ${dispositionRules.map((rule) => `
             <div class="ladder-step">
@@ -945,7 +1194,7 @@ function renderCheckChips(mech) {
 
 function renderMechanismCard({ mech, rules: list }) {
   return `
-    <article class="mech-card">
+    <article class="mech-card" id="mech-${escapeHtml(mech.mechanism_id)}">
       <div class="mech-head">
         <div>
           <strong>${escapeHtml(mech.label)}</strong>
