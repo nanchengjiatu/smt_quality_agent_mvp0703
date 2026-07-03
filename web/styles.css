@@ -409,6 +409,151 @@ tr:last-child td {
   font-weight: 700;
 }
 
+.rules-view > .panel {
+  margin-bottom: 14px;
+}
+
+.rules-view .panel h2 .details {
+  font-weight: 400;
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+.ladder {
+  display: grid;
+  gap: 8px;
+}
+
+.ladder-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.ladder-order {
+  flex: none;
+  min-width: 64px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #e6f4f1;
+  color: var(--accent-dark);
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ladder-order.priority-P1 { background: #fee4e2; color: var(--danger); }
+.ladder-order.priority-P2 { background: #fef0c7; color: var(--warning); }
+.ladder-order.priority-P3 { background: #eef2f6; color: var(--low); }
+
+.mech-list {
+  display: grid;
+  gap: 12px;
+}
+
+.mech-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.mech-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mech-head strong {
+  font-size: 15px;
+  margin-right: 6px;
+}
+
+.mech-warning {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mech-card > p.details {
+  margin: 6px 0 8px;
+}
+
+.mech-checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.check-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: #f7fafc;
+  color: var(--text);
+}
+
+.check-chip.check-available {
+  border-color: #a6f4c5;
+  background: #ecfdf3;
+  color: var(--ok);
+}
+
+.check-chip.check-planned {
+  border-color: #fedf89;
+  background: #fffaeb;
+  color: var(--warning);
+}
+
+.check-chip.check-not_collected {
+  background: #eef2f6;
+  color: var(--low);
+  border-style: dashed;
+}
+
+.check-chip.check-manual {
+  background: #fff;
+  color: var(--muted);
+}
+
+.mech-empty {
+  padding: 8px 0 2px;
+}
+
+.rule-entry {
+  border-top: 1px dashed var(--line);
+  padding: 8px 0;
+}
+
+.rule-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.rule-conf {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+
 .rules-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);

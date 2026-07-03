@@ -183,6 +183,16 @@ class RuleCatalogTest(unittest.TestCase):
         self.assertIn("rule.review_gasketing_board_support", rule_ids)
         self.assertIn("disposition.widened_scope", rule_ids)
         self.assertTrue(all("condition" in rule and "output" in rule for rule in catalog["rules"]))
+        # 规则页按"决策梯 → 机理 → 处置"组织,目录必须带机理摘要。
+        self.assertEqual(len(catalog["mechanisms"]), 13)
+        clogging = next(
+            item for item in catalog["mechanisms"]
+            if item["mechanism_id"] == "mech.aperture_clogging"
+        )
+        self.assertEqual(clogging["element"], "钢网开口")
+        self.assertTrue(any(
+            check["availability"] == "not_collected" for check in clogging["auto_checks"]
+        ))
 
     def test_scope_rules_are_written_as_review_cards(self) -> None:
         catalog = rule_catalog()

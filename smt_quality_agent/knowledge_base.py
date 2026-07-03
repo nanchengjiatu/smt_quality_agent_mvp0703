@@ -51,6 +51,7 @@ from __future__ import annotations
 from typing import Any
 
 from smt_quality_agent.ontology import (
+    MECHANISMS,
     concept_label,
     evidence_availability,
     mechanism_by_id,
@@ -1125,7 +1126,41 @@ def rule_catalog() -> dict[str, Any]:
         "focus": "锡膏印刷 + SPI 多锡/少锡异常管理",
         "rule_count": len(entries),
         "rules": entries,
+        "mechanisms": mechanism_catalog(),
     }
+
+
+def mechanism_catalog() -> list[dict[str, Any]]:
+    """Display-ready mechanism summaries for the rules page: each mechanism
+    with its location, signature, early-warning hook, and evidence split into
+    auto (with availability) and manual."""
+    entries = []
+    for mechanism_id, mechanism in MECHANISMS.items():
+        props = mechanism.get("properties") or {}
+        entries.append({
+            "mechanism_id": mechanism_id,
+            "label": mechanism["label"],
+            "description": mechanism["description"],
+            "element": concept_label(props.get("element", "")),
+            "stage": concept_label(props.get("stage", "")),
+            "direction": props.get("direction", ""),
+            "onset": props.get("onset", ""),
+            "signature_text": props.get("signature_text") or "",
+            "early_warning": props.get("early_warning") or "",
+            "auto_checks": [
+                {
+                    "id": evidence_id,
+                    "label": concept_label(evidence_id),
+                    "availability": evidence_availability(evidence_id),
+                }
+                for evidence_id in props.get("auto_checks", [])
+            ],
+            "manual_checks": [
+                {"id": evidence_id, "label": concept_label(evidence_id)}
+                for evidence_id in props.get("manual_checks", [])
+            ],
+        })
+    return entries
 
 
 def enrich_with_ontology_ids(item: dict[str, Any]) -> dict[str, Any]:

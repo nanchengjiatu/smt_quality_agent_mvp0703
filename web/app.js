@@ -806,6 +806,19 @@ viewRoot.addEventListener("click", (event) => {
   }
 });
 
+const ONSET_LABELS = {
+  gradual: "渐变(可预警)",
+  step: "突变",
+  periodic: "周期",
+  any: "不定",
+};
+
+const AVAILABILITY_LABELS = {
+  available: "已实现",
+  planned: "待实现",
+  not_collected: "数据未采集",
+};
+
 function renderRulesView() {
   const catalog = state.rules || {};
   const rules = catalog.rules || [];
@@ -820,88 +833,167 @@ function renderRulesView() {
   }
 
   const query = (searchInput.value || "").trim().toLowerCase();
-  const types = Array.from(new Set(rules.map((item) => item.rule_type))).sort();
-  const filtered = rules.filter((rule) => {
-    if (state.ruleType && rule.rule_type !== state.ruleType) {
-      return false;
+  const matches = (item) => !query || JSON.stringify(item).toLowerCase().includes(query);
+
+  const decisionRules = rules.filter((rule) => rule.rule_type === "decision").filter(matches);
+  const dispositionRules = rules.filter((rule) => rule.rule_type === "disposition").filter(matches);
+  const executable = rules.filter(
+    (rule) => rule.rule_type !== "decision" && rule.rule_type !== "disposition",
+  );
+
+  const rulesByMechanism = new Map();
+  executable.forEach((rule) => {
+    const key = (rule.output || {}).mechanism_id || "__unbound__";
+    if (!rulesByMechanism.has(key)) {
+      rulesByMechanism.set(key, []);
     }
-    if (!query) {
-      return true;
-    }
-    return JSON.stringify(rule).toLowerCase().includes(query);
+    rulesByMechanism.get(key).push(rule);
   });
+
+  const mechanismCards = (catalog.mechanisms || [])
+    .map((mech) => ({
+      mech,
+      rules: (rulesByMechanism.get(mech.mechanism_id) || []).filter(matches),
+    }))
+    // 搜索时只留有命中规则或机理自身命中的卡片;不搜索时全部展示
+    .filter(({ mech, rules: list }) => !query || list.length || matches(mech));
+  const unboundRules = (rulesByMechanism.get("__unbound__") || []).filter(matches);
+  const shownCount = decisionRules.length + dispositionRules.length + unboundRules.length
+    + mechanismCards.reduce((sum, card) => sum + card.rules.length, 0);
 
   viewRoot.innerHTML = `
     <section class="rules-view">
       <div class="rules-head">
         <div>
           <h2>规则/知识库</h2>
-          <p class="details">${escapeHtml(catalog.version || "")} · ${escapeHtml(catalog.focus || "")}</p>
+          <p class="details">
+            ${escapeHtml(catalog.version || "")} · ${escapeHtml(catalog.focus || "")} ·
+            浏览动线：<strong>诊断决策梯</strong>(什么条件先怀疑什么) →
+            <strong>机理目录</strong>(每个机理的证据与规则) → <strong>处置策略</strong>
+          </p>
         </div>
-        <div class="rules-count">${filtered.length} / ${rules.length}</div>
+        <div class="rules-count">${shownCount} / ${rules.length}</div>
       </div>
-      <div class="rule-type-filter">
-        <button class="rule-type-chip ${state.ruleType ? "" : "active"}" data-rule-type="">全部</button>
-        ${types.map((type) => `
-          <button class="rule-type-chip ${state.ruleType === type ? "active" : ""}" data-rule-type="${escapeHtml(type)}">
-            ${escapeHtml(ruleTypeLabel(type))}
-          </button>
-        `).join("")}
-      </div>
-      <div class="rules-table-wrap">
-        <table class="rules-table">
-          <thead>
-            <tr>
-              <th>规则</th>
-              <th>类型</th>
-              <th>条件</th>
-              <th>判断与动作</th>
-              <th>证据与复判</th>
-              <th>来源</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filtered.map(renderRuleRow).join("") || `<tr><td colspan="5" class="empty">没有匹配规则</td></tr>`}
-          </tbody>
-        </table>
-      </div>
+
+      <section class="panel">
+        <h2>① 诊断决策梯 <span class="details">order 越小越先求值,门槛类在前</span></h2>
+        <div class="ladder">
+          ${decisionRules.map((rule) => `
+            <div class="ladder-step">
+              <span class="ladder-order">${escapeHtml(String(rule.priority || ""))}</span>
+              <div>
+                <strong>${escapeHtml((rule.condition || {}).when || "")}</strong>
+                <div class="details">提名：${escapeHtml((rule.output || {}).action || "")}</div>
+              </div>
+            </div>
+          `).join("") || `<div class="empty">没有匹配的决策规则</div>`}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>② 机理目录与规则 <span class="details">${(catalog.mechanisms || []).length} 个失效机理 · 规则按其绑定的机理分组</span></h2>
+        <div class="mech-list">
+          ${mechanismCards.map(renderMechanismCard).join("")}
+          ${unboundRules.length ? `
+            <article class="mech-card">
+              <div class="mech-head">
+                <div>
+                  <strong>形态归因(不绑定机理)</strong>
+                  <span class="details">趋势形态只是证据,不足以锁定物理机理</span>
+                </div>
+              </div>
+              ${unboundRules.map(renderRuleEntry).join("")}
+            </article>` : ""}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>③ 处置策略 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
+        <div class="ladder">
+          ${dispositionRules.map((rule) => `
+            <div class="ladder-step">
+              <span class="ladder-order priority-${escapeHtml(rule.priority || "")}">${escapeHtml(rule.priority || "")}</span>
+              <div>
+                <strong>${escapeHtml((rule.output || {}).disposition || "")}</strong>
+                <div class="details">${escapeHtml((rule.output || {}).reason || "")}</div>
+              </div>
+            </div>
+          `).join("") || `<div class="empty">没有匹配的处置策略</div>`}
+        </div>
+      </section>
     </section>
   `;
 }
 
-function renderRuleRow(rule) {
+function renderCheckChips(mech) {
+  const auto = (mech.auto_checks || []).map((check) => `
+    <span class="check-chip check-${escapeHtml(check.availability)}"
+          title="${escapeHtml(AVAILABILITY_LABELS[check.availability] || check.availability)}">
+      ${escapeHtml(check.label)}${check.availability !== "available" ? ` · ${escapeHtml(AVAILABILITY_LABELS[check.availability] || "")}` : ""}
+    </span>
+  `).join("");
+  const manual = (mech.manual_checks || []).map((check) => `
+    <span class="check-chip check-manual">${escapeHtml(check.label)}</span>
+  `).join("");
+  return `
+    <div class="mech-checks">
+      ${auto ? `<span class="details">自动核验：</span>${auto}` : ""}
+      ${manual ? `<span class="details">现场确认：</span>${manual}` : ""}
+    </div>
+  `;
+}
+
+function renderMechanismCard({ mech, rules: list }) {
+  return `
+    <article class="mech-card">
+      <div class="mech-head">
+        <div>
+          <strong>${escapeHtml(mech.label)}</strong>
+          ${mech.direction ? `<span class="${defectClass(mech.direction)}">${escapeHtml(mech.direction)}</span>` : ""}
+          <span class="details">
+            ${escapeHtml(mech.element)} · ${escapeHtml(mech.stage)}
+            · 起病：${escapeHtml(ONSET_LABELS[mech.onset] || mech.onset || "-")}
+            ${mech.signature_text ? ` · 签名：${escapeHtml(mech.signature_text)}` : ""}
+          </span>
+        </div>
+        ${mech.early_warning ? `<span class="mech-warning">${escapeHtml(mech.early_warning)}</span>` : ""}
+      </div>
+      <p class="details">${escapeHtml(mech.description)}</p>
+      ${renderCheckChips(mech)}
+      ${list.length
+        ? list.map(renderRuleEntry).join("")
+        : `<div class="details mech-empty">暂无绑定规则（该机理的自动判别在第二阶段接入）</div>`}
+    </article>
+  `;
+}
+
+function renderRuleEntry(rule) {
   const output = rule.output || {};
   const condition = Object.entries(rule.condition || {})
     .map(([key, value]) => `${key}: ${value}`)
     .join("；");
-  const outputLines = [
+  const bodyLines = [
     output.cause ? `根因：${output.cause}` : "",
-    output.mechanism ? `机理：${output.mechanism}（${output.mechanism_id || ""}）` : "",
-    output.disposition ? `处置：${output.disposition}` : "",
     output.evidence ? `证据：${output.evidence}` : "",
     output.action ? `动作：${output.action}` : "",
-    output.reason ? `原因：${output.reason}` : "",
     output.applies_when ? `适用：${output.applies_when}` : "",
     output.not_sufficient_when ? `不足：${output.not_sufficient_when}` : "",
     output.first_check ? `首查：${output.first_check}` : "",
-  ].filter(Boolean);
-  const evidenceLines = [
-    output.evidence_required ? `所需证据：${[].concat(output.evidence_required).join("、")}` : "",
+    output.evidence_required && output.evidence_required.length
+      ? `所需证据：${[].concat(output.evidence_required).join("、")}` : "",
     output.recheck_method ? `复判：${output.recheck_method}` : "",
-    output.confidence_base != null ? `基础置信度：${Math.round(Number(output.confidence_base) * 100)}%` : "",
   ].filter(Boolean);
   return `
-    <tr>
-      <td>
+    <div class="rule-entry">
+      <div class="rule-entry-head">
         <strong>${escapeHtml(rule.rule_id)}</strong>
-        ${rule.priority ? `<div><span class="badge">${escapeHtml(rule.priority)}</span></div>` : ""}
-      </td>
-      <td>${escapeHtml(ruleTypeLabel(rule.rule_type))}</td>
-      <td class="details">${escapeHtml(condition || "-")}</td>
-      <td class="details">${outputLines.map(escapeHtml).join("<br>") || "-"}</td>
-      <td class="details">${evidenceLines.map(escapeHtml).join("<br>") || "-"}</td>
-      <td class="details">${escapeHtml(rule.source || "-")}</td>
-    </tr>
+        <span class="badge">${escapeHtml(ruleTypeLabel(rule.rule_type))}</span>
+        <span class="details">${escapeHtml(condition || "-")}</span>
+        ${output.confidence_base != null
+          ? `<span class="rule-conf">先验 ${Math.round(Number(output.confidence_base) * 100)}%</span>` : ""}
+      </div>
+      <div class="details">${bodyLines.map(escapeHtml).join("<br>")}</div>
+    </div>
   `;
 }
 
