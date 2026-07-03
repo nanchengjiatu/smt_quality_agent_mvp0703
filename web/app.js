@@ -9,6 +9,8 @@ const DATA_PATHS = {
 
 const API_REFRESH = "/api/refresh";
 const API_LIVE = "/api/live";
+const API_DATASOURCE = "/api/datasource";
+const API_RULES = "/api/rules";
 const LIVE_POLL_MS = 4000;
 
 const state = {
@@ -19,6 +21,8 @@ const state = {
   top: {},
   analysis: null,
   drilldown: null,
+  rules: null,
+  ruleType: "",
   // Per-stage status from the last /api/refresh, keyed by stage name.
   // Lets each view show an honest "load failed" message instead of a blank.
   stageStatus: {},
@@ -42,19 +46,33 @@ const riskFilter = document.getElementById("riskFilter");
 const searchInput = document.getElementById("searchInput");
 
 document.getElementById("refreshButton").addEventListener("click", refreshData);
+document.getElementById("datasourceButton").addEventListener("click", openDatasourceDialog);
+document.getElementById("rulesButton").addEventListener("click", () => setActiveView("rules"));
 
 document.querySelectorAll(".tab").forEach((button) => {
-  button.addEventListener("click", () => {
-    state.activeView = button.dataset.view;
-    document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
-    button.classList.add("active");
-    render();
-  });
+  button.addEventListener("click", () => setActiveView(button.dataset.view));
 });
 
 [defectFilter, riskFilter, searchInput].forEach((control) => {
   control.addEventListener("input", render);
 });
+
+function setActiveView(viewName) {
+  state.activeView = viewName || "abnormal";
+  document.querySelectorAll(".tab").forEach((item) => {
+    item.classList.toggle("active", item.dataset.view === state.activeView);
+  });
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", state.activeView);
+  window.history.replaceState({}, "", url);
+  render();
+}
+
+function initialView() {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get("view") || window.location.hash.replace(/^#/, "");
+  return ["abnormal", "cases", "dashboard", "events", "rules"].includes(view) ? view : "abnormal";
+}
 
 // Re-run the analysis pipeline on the server, then reload the generated JSON.
 async function refreshData() {
@@ -90,13 +108,14 @@ async function loadData(meta) {
     dataStatus.textContent = "加载数据中...";
   }
   try {
-    const [abnormals, cases, summary, top, analysis, drilldown] = await Promise.all([
+    const [abnormals, cases, summary, top, analysis, drilldown, rules] = await Promise.all([
       fetchJson(DATA_PATHS.abnormals),
       fetchJson(DATA_PATHS.cases),
       fetchJson(DATA_PATHS.summary),
       fetchJson(DATA_PATHS.top),
       fetchJson(DATA_PATHS.analysis).catch(() => null),
       fetchJson(DATA_PATHS.drilldown).catch(() => null),
+      fetchJson(API_RULES).catch(() => null),
     ]);
 
     // Work out deltas and newly-added abnormals before overwriting state.
@@ -114,6 +133,7 @@ async function loadData(meta) {
     state.top = top;
     state.analysis = analysis;
     state.drilldown = drilldown;
+    state.rules = rules;
     dataStatus.textContent = composeStatus(meta, abnormals, cases);
     render();
 
@@ -223,6 +243,8 @@ function render() {
     renderCaseView();
   } else if (state.activeView === "events") {
     renderEventsView();
+  } else if (state.activeView === "rules") {
+    renderRulesView();
   } else {
     renderDashboardView();
   }
@@ -231,21 +253,63 @@ function render() {
 function renderMetrics() {
   const summary = state.summary || {};
   const prev = state.prevSummary || {};
-  const metrics = [
-    { label: "异常总数", key: "abnormal_count", tone: "warn" },
-    { label: "少锡", key: "less_solder_count" },
-    { label: "多锡", key: "more_solder_count" },
-    { label: "未关闭案例", key: "open_case_count" },
-    { label: "高风险", key: "high_risk_count", tone: "danger" },
-    { label: "中风险", key: "medium_risk_count" },
-    { label: "低风险", key: "low_risk_count" },
-    { label: "复测有效率", key: "recheck_effective_rate", rate: true, tone: "ok" },
-  ];
+  let metrics;
+
+  if (state.activeView === "rules") {
+    const catalog = state.rules || {};
+    const rules = catalog.rules || [];
+    const typeCount = new Set(rules.map((item) => item.rule_type)).size;
+    metrics = [
+      { label: "规则总数", value: catalog.rule_count || rules.length },
+      { label: "规则类型", value: typeCount },
+      { label: "根因规则", value: rules.filter((item) => String(item.rule_type || "").includes("cause")).length },
+      { label: "处置规则", value: rules.filter((item) => item.rule_type === "disposition").length },
+      { label: "目录版本", value: catalog.version || "-" },
+      { label: "来源", value: "knowledge_base" },
+    ];
+  } else if (state.activeView === "events") {
+    const overview = (state.analysis || {}).data_overview || {};
+    metrics = [
+      { label: "检测记录", value: overview.record_count },
+      { label: "生产板数", value: overview.board_count },
+      { label: "首次NG点", value: overview.ng_count, tone: "warn" },
+      { label: "NG板数", value: overview.ng_board_count, tone: "danger" },
+      { label: "聚集事件", value: ((state.analysis || {}).events || []).length },
+      { label: "焊点不良率", value: overview.defect_rate_percent, percent: true },
+      { label: "板级直通率", value: overview.board_pass_rate_percent, percent: true, tone: "ok" },
+      { label: "复测有效率", value: overview.recheck_effective_rate, rate: true, tone: "ok" },
+    ];
+  } else if (state.activeView === "cases") {
+    const cases = state.cases || [];
+    metrics = [
+      { label: "案例总数", value: cases.length, tone: "warn" },
+      { label: "未关闭案例", value: cases.filter((item) => !["已关闭", "关闭"].includes(item.status)).length },
+      { label: "高风险案例", value: cases.filter((item) => item.risk_level === "高").length, tone: "danger" },
+      { label: "中风险案例", value: cases.filter((item) => item.risk_level === "中").length },
+      { label: "多锡案例", value: cases.filter((item) => item.defect_type === "多锡").length },
+      { label: "少锡案例", value: cases.filter((item) => item.defect_type === "少锡").length },
+      { label: "关联异常", value: cases.reduce((sum, item) => sum + (item.abnormal_count || 0), 0) },
+      { label: "复测有效率", value: summary.recheck_effective_rate, rate: true, tone: "ok" },
+    ];
+  } else {
+    metrics = [
+      { label: "异常总数", key: "abnormal_count", tone: "warn" },
+      { label: "少锡", key: "less_solder_count" },
+      { label: "多锡", key: "more_solder_count" },
+      { label: "未关闭案例", key: "open_case_count" },
+      { label: "高风险", key: "high_risk_count", tone: "danger" },
+      { label: "中风险", key: "medium_risk_count" },
+      { label: "低风险", key: "low_risk_count" },
+      { label: "复测有效率", key: "recheck_effective_rate", rate: true, tone: "ok" },
+    ];
+  }
 
   document.getElementById("metrics").innerHTML = metrics.map((metric) => {
-    const raw = summary[metric.key];
-    const value = metric.rate ? formatRate(raw) : (raw ?? 0);
-    const delta = metric.rate ? "" : deltaBadge(raw, prev[metric.key]);
+    const raw = Object.hasOwn(metric, "value") ? metric.value : summary[metric.key];
+    const value = metric.rate
+      ? formatRate(raw)
+      : metric.percent && raw != null ? `${raw}%` : (raw ?? 0);
+    const delta = metric.key && !metric.rate ? deltaBadge(raw, prev[metric.key]) : "";
     return `
       <article class="metric${metric.tone ? " tone-" + metric.tone : ""}">
         <span>${metric.label}</span>
@@ -281,6 +345,180 @@ function showToast(text) {
   toast.classList.add("show");
   clearTimeout(showToast._timer);
   showToast._timer = setTimeout(() => toast.classList.remove("show"), 4000);
+}
+
+async function openDatasourceDialog() {
+  let config = null;
+  try {
+    config = await fetchJson(API_DATASOURCE);
+  } catch (error) {
+    showToast(`读取数据源配置失败：${error.message}`);
+    config = {
+      type: "postgresql",
+      host: "",
+      port: 5432,
+      database: "l780db",
+      user: "",
+      password: "",
+      tables: { full_spi: "full_excel0623", ng_events: "over_volume" },
+      fields: { time: "fdate" },
+      refresh_interval_seconds: 30,
+    };
+  }
+
+  const existing = document.getElementById("datasourceOverlay");
+  if (existing) {
+    existing.remove();
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "datasourceOverlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-panel datasource-modal" role="dialog" aria-modal="true" aria-labelledby="datasourceTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="datasourceTitle">数据库连接</h2>
+          <p>低频配置入口。保存配置后不会自动刷新数据，需要手动点击刷新。</p>
+        </div>
+        <button class="modal-close" data-ds-close aria-label="关闭">×</button>
+      </div>
+      <form id="datasourceForm" class="datasource-form" data-password-set="${config.password_set ? "1" : "0"}">
+        <label>
+          数据库类型
+          <input name="type" value="PostgreSQL" disabled>
+        </label>
+        <label>
+          Host
+          <input name="host" value="${escapeHtml(config.host || "")}" placeholder="留空使用本机默认 socket">
+        </label>
+        <label>
+          Port
+          <input name="port" type="number" min="1" max="65535" value="${escapeHtml(config.port || 5432)}">
+        </label>
+        <label>
+          Database
+          <input name="database" required value="${escapeHtml(config.database || "l780db")}">
+        </label>
+        <label>
+          User
+          <input name="user" value="${escapeHtml(config.user || "")}" autocomplete="username">
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" value="" placeholder="${config.password_set ? "留空表示不修改已保存密码" : "可选"}" autocomplete="current-password">
+        </label>
+        <label>
+          SPI 明细表
+          <input name="full_spi" required value="${escapeHtml(((config.tables || {}).full_spi) || "full_excel0623")}">
+        </label>
+        <label>
+          NG/异常表
+          <input name="ng_events" value="${escapeHtml(((config.tables || {}).ng_events) || "over_volume")}">
+        </label>
+        <label>
+          时间字段
+          <input name="time" required value="${escapeHtml(((config.fields || {}).time) || "fdate")}">
+        </label>
+        <label>
+          刷新间隔(秒)
+          <input name="refresh_interval_seconds" type="number" min="5" value="${escapeHtml(config.refresh_interval_seconds || 30)}">
+        </label>
+      </form>
+      <div id="datasourceResult" class="datasource-result"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-button" id="datasourceTest">测试连接</button>
+        <button type="button" class="secondary-button" data-ds-close>取消</button>
+        <button type="button" class="primary-button" id="datasourceSave">保存配置</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll("[data-ds-close]").forEach((button) => {
+    button.addEventListener("click", closeDatasourceDialog);
+  });
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      closeDatasourceDialog();
+    }
+  });
+  overlay.querySelector("#datasourceTest").addEventListener("click", testDatasourceFromForm);
+  overlay.querySelector("#datasourceSave").addEventListener("click", saveDatasourceFromForm);
+}
+
+function closeDatasourceDialog() {
+  const overlay = document.getElementById("datasourceOverlay");
+  if (overlay) {
+    overlay.remove();
+  }
+}
+
+function datasourcePayloadFromForm() {
+  const form = document.getElementById("datasourceForm");
+  const data = new FormData(form);
+  const password = String(data.get("password") || "");
+  return {
+    type: "postgresql",
+    host: String(data.get("host") || "").trim(),
+    port: Number(data.get("port") || 5432),
+    database: String(data.get("database") || "").trim(),
+    user: String(data.get("user") || "").trim(),
+    password: password || (form.dataset.passwordSet === "1" ? "******" : ""),
+    tables: {
+      full_spi: String(data.get("full_spi") || "").trim(),
+      ng_events: String(data.get("ng_events") || "").trim(),
+    },
+    fields: {
+      time: String(data.get("time") || "").trim(),
+    },
+    refresh_interval_seconds: Number(data.get("refresh_interval_seconds") || 30),
+  };
+}
+
+function setDatasourceResult(message, tone = "") {
+  const result = document.getElementById("datasourceResult");
+  if (!result) {
+    return;
+  }
+  result.className = `datasource-result ${tone}`;
+  result.textContent = message;
+}
+
+async function postDatasource(path, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.ok === false) {
+    throw new Error(body.error || `HTTP ${response.status}`);
+  }
+  return body;
+}
+
+async function testDatasourceFromForm() {
+  setDatasourceResult("正在测试连接...");
+  try {
+    const result = await postDatasource(`${API_DATASOURCE}/test`, datasourcePayloadFromForm());
+    setDatasourceResult(
+      `连接成功：${result.database} / ${result.table}，${result.row_count} 行，最新时间 ${result.latest_time || "-"}`,
+      "ok",
+    );
+  } catch (error) {
+    setDatasourceResult(`连接失败：${error.message}`, "error");
+  }
+}
+
+async function saveDatasourceFromForm() {
+  setDatasourceResult("正在保存配置...");
+  try {
+    await postDatasource(API_DATASOURCE, datasourcePayloadFromForm());
+    setDatasourceResult("配置已保存。需要应用新数据源时，请点击右上角刷新。", "ok");
+    showToast("数据库连接配置已保存");
+  } catch (error) {
+    setDatasourceResult(`保存失败：${error.message}`, "error");
+  }
 }
 
 function renderAbnormalView() {
@@ -322,7 +560,16 @@ function renderAbnormalRow(item, flashKeys = new Set()) {
   const badge = trigger
     ? `<button class="dd-entry-badge" data-dd="${escapeHtml(trigger.trigger_id)}" title="进入下钻分析">🔴 三板连发</button>`
     : "";
-  const rowClass = `risk-row-${item.risk_level}${flashKeys.has(abnormalKey(item)) ? " is-new" : ""}`;
+  // Only true three-consecutive-board (三板连发) rows get a persistent red
+  // highlight; all other rows stay plain.
+  const classes = [];
+  if (trigger) {
+    classes.push("row-trigger");
+  }
+  if (flashKeys.has(abnormalKey(item))) {
+    classes.push("is-new");
+  }
+  const rowClass = classes.join(" ");
   return `
     <tr class="${escapeHtml(rowClass)}">
       <td>${escapeHtml(item.inspect_time)}</td>
@@ -412,6 +659,8 @@ function renderEventsView() {
   const overviewItems = [
     ["检测记录", overview.record_count ?? "-"],
     ["生产板数", overview.board_count ?? "-"],
+    ["首次检测NG", overview.ng_count ?? "-"],
+    ["复测NG", overview.recheck_ng_count ?? "-"],
     ["焊点不良率", overview.defect_rate_percent != null ? `${overview.defect_rate_percent}%` : "-"],
     ["板级直通率", overview.board_pass_rate_percent != null ? `${overview.board_pass_rate_percent}%` : "-"],
     ["复测有效率", formatRate(overview.recheck_effective_rate)],
@@ -422,7 +671,7 @@ function renderEventsView() {
   viewRoot.innerHTML = `
     <div class="event-view">
       <section class="panel">
-        <h2>全量数据概览 <span class="details">${escapeHtml(analysis.source_table || "")}</span></h2>
+        <h2>事件总览 <span class="details">${escapeHtml(analysis.source_table || "")}</span></h2>
         <div class="overview-grid">
           ${overviewItems.map(([label, value]) => `
             <div class="overview-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
@@ -430,9 +679,15 @@ function renderEventsView() {
         </div>
       </section>
       ${renderDrilldownPanel()}
-      ${events.length
-        ? events.map(renderEventCard).join("")
-        : `<div class="empty">数据时间范围内未检出聚集事件</div>`}
+      <section class="panel">
+        <div class="section-head">
+          <h2>参数聚集事件</h2>
+          <span class="details">${events.length ? `${events.length} 个事件` : "暂无事件"}</span>
+        </div>
+        ${events.length
+          ? `<div class="event-summary-list">${events.map(renderEventCard).join("")}</div>`
+          : `<div class="empty">数据时间范围内未检出聚集事件</div>`}
+      </section>
       ${(analysis.caveats || []).length
         ? `<p class="details caveats">说明：${analysis.caveats.map(escapeHtml).join(" ")}</p>`
         : ""}
@@ -441,52 +696,36 @@ function renderEventsView() {
 }
 
 function renderEventCard(event) {
-  const boards = (event.boards || []).map((board) => `
-    <tr>
-      <td>${escapeHtml(board.time)}</td>
-      <td>${escapeHtml(board.board_sn)}</td>
-      <td>${escapeHtml(board.ng_count)}</td>
-      <td>${board.ng_share != null ? `${(board.ng_share * 100).toFixed(0)}%` : "-"}</td>
-      <td>${formatNumber(board.metric_avg)}%</td>
-    </tr>
-  `).join("");
-
-  const causes = (event.suggested_causes || []).map((cause, index) => `
-    <li><strong>${escapeHtml(cause)}</strong><span class="details"> — ${escapeHtml((event.suggested_actions || [])[index] || "")}</span></li>
-  `).join("");
+  const firstFinding = (event.findings || [])[0] || "已检出聚集异常，建议进入下钻或调取明细复核。";
+  const primaryCandidate = (event.cause_candidates || [])[0] || {};
+  const primaryCause = primaryCandidate.cause || (event.suggested_causes || [])[0] || "待现场确认";
+  const primaryAction = primaryCandidate.action || (event.suggested_actions || [])[0] || "复核异常时间段、设备参数和首检/复测记录。";
+  const primaryRule = primaryCandidate.rule_id || "";
 
   return `
-    <section class="panel event-card">
-      <h2>
-        ${escapeHtml(event.event_id)}
-        <span class="${defectClass(event.main_defect_cn)}">${escapeHtml(event.main_defect_cn)}</span>
-        <span class="badge risk-高">${escapeHtml(event.scope)}</span>
-      </h2>
-      <p class="details">
-        ${escapeHtml(event.model)} · ${escapeHtml(event.machine)} ·
-        ${escapeHtml(event.start_time)} ~ ${escapeHtml(event.end_time)}（${escapeHtml(event.duration_minutes)} 分钟）·
-        ${escapeHtml(event.board_count)} 块板 / ${escapeHtml(event.ng_record_count)} 条 NG ·
-        前兆判定：${escapeHtml((event.precursor || {}).verdict || "-")}
-      </p>
-      <div class="event-body">
-        <div>
-          <h3>分析结论</h3>
-          <ul class="finding-list">
-            ${(event.findings || []).map((finding) => `<li>${escapeHtml(finding)}</li>`).join("")}
-          </ul>
-          <h3>疑似原因与建议</h3>
-          <ul class="finding-list">${causes}</ul>
+    <article class="event-row">
+      <div class="event-row-main">
+        <div class="event-row-title">
+          <strong>${escapeHtml(event.event_id)}</strong>
+          <span class="${defectClass(event.main_defect_cn)}">${escapeHtml(event.main_defect_cn)}</span>
+          <span class="badge risk-高">${escapeHtml(event.scope)}</span>
         </div>
-        <div class="table-wrap">
-          <table class="event-board-table">
-            <thead>
-              <tr><th>时间</th><th>PCB</th><th>NG 点数</th><th>NG 占比</th><th>平均${escapeHtml(event.metric_label)}</th></tr>
-            </thead>
-            <tbody>${boards}</tbody>
-          </table>
+        <p>${escapeHtml(firstFinding)}</p>
+        <div class="event-row-meta">
+          <span>${escapeHtml(event.model)}</span>
+          <span>${escapeHtml(event.machine)}</span>
+          <span>${escapeHtml(event.start_time)} ~ ${escapeHtml(event.end_time)}</span>
+          <span>${escapeHtml(event.board_count)} 块板 / ${escapeHtml(event.ng_record_count)} 条 NG</span>
+          <span>前兆：${escapeHtml((event.precursor || {}).verdict || "-")}</span>
         </div>
       </div>
-    </section>
+      <div class="event-row-action">
+        <span class="details">首要判断</span>
+        <strong>${escapeHtml(primaryCause)}</strong>
+        ${primaryRule ? `<small>${escapeHtml(primaryRule)}</small>` : ""}
+        <small>${escapeHtml(primaryAction)}</small>
+      </div>
+    </article>
   `;
 }
 
@@ -501,28 +740,61 @@ function renderDrilldownPanel() {
   }
   return `
     <section class="panel">
-      <h2>三板连发下钻 <span class="details">${escapeHtml((state.drilldown || {}).trigger_rule || "")}</span></h2>
-      <div class="dd-trigger-cards">
-        ${triggers.map((trigger) => `
-          <article class="dd-trigger-card">
-            <div>
-              <strong>${escapeHtml(trigger.trigger_id)} · 焊盘 ${escapeHtml(trigger.pad_name)}</strong>
-              <span class="${defectClass(trigger.main_defect_cn)}">${escapeHtml(trigger.main_defect_cn)}</span>
-            </div>
-            <p class="details">
-              ${escapeHtml(trigger.model)} · ${escapeHtml(trigger.start_time)} ~ ${escapeHtml(trigger.end_time)} ·
-              连续 ${escapeHtml(trigger.trigger_board_count)} 块板 ·
-              ${escapeHtml(trigger.change_type.verdict)} · ${escapeHtml(trigger.recovery.verdict)}
-            </p>
-            <button class="dd-enter" data-dd="${escapeHtml(trigger.trigger_id)}">进入下钻分析 →</button>
-          </article>
-        `).join("")}
+      <div class="section-head">
+        <h2>待处理三板连发</h2>
+        <span class="details">${escapeHtml((state.drilldown || {}).trigger_rule || "")}</span>
+      </div>
+      <div class="decision-list">
+        ${triggers.map(renderDrilldownDecisionCard).join("")}
       </div>
     </section>
   `;
 }
 
+function renderDrilldownDecisionCard(trigger) {
+  const contract = trigger.analysis_contract || {};
+  const contractScope = contract.scope || {};
+  const contractDisposition = contract.disposition || {};
+  const contractTrigger = contract.trigger || {};
+  const priority = contractDisposition.priority || "P3";
+  return `
+    <article class="decision-card priority-${escapeHtml(priority)}">
+      <div class="decision-priority">
+        <strong>${escapeHtml(priority)}</strong>
+        <span>${escapeHtml(contractScope.confidence || "中")}置信</span>
+      </div>
+      <div class="decision-main">
+        <div class="decision-title">
+          <strong>${escapeHtml(trigger.trigger_id)} · ${escapeHtml(trigger.pad_name)}</strong>
+          <span class="${defectClass(trigger.main_defect_cn)}">${escapeHtml(trigger.main_defect_cn)}</span>
+          <span class="badge">${escapeHtml(contractScope.category || "待判定")}</span>
+          <span class="badge dd-badge">连续 ${escapeHtml(trigger.trigger_board_count)} 板</span>
+        </div>
+        <p>${escapeHtml(contractDisposition.suggestion || "按单点异常做快速确认")}</p>
+        <div class="decision-meta">
+          <span>${escapeHtml(trigger.model)}</span>
+          <span>${escapeHtml(trigger.start_time)} ~ ${escapeHtml(trigger.end_time)}</span>
+          <span>${escapeHtml(((contract.trend || {}).verdict) || "")}</span>
+          <span>${escapeHtml(((contract.recheck || {}).recovery_verdict) || "")}</span>
+        </div>
+      </div>
+      <div class="decision-action">
+        <span class="details">第一步动作</span>
+        <strong>${escapeHtml(contractDisposition.primary_action || "复核触发 Pad、原始 SPI 图像和事件时段设备记录。")}</strong>
+        <button class="dd-enter" data-dd="${escapeHtml(trigger.trigger_id)}">查看下钻</button>
+      </div>
+    </article>
+  `;
+}
+
 viewRoot.addEventListener("click", (event) => {
+  const ruleType = event.target.closest("[data-rule-type]");
+  if (ruleType) {
+    state.ruleType = ruleType.dataset.ruleType || "";
+    render();
+    return;
+  }
+
   const entry = event.target.closest("[data-dd]");
   if (!entry) {
     return;
@@ -533,6 +805,118 @@ viewRoot.addEventListener("click", (event) => {
     openDrilldown(trigger);
   }
 });
+
+function renderRulesView() {
+  const catalog = state.rules || {};
+  const rules = catalog.rules || [];
+  if (!rules.length) {
+    viewRoot.innerHTML = `
+      <section class="panel">
+        <h2>规则/知识库</h2>
+        <div class="empty">规则目录加载失败，请确认服务已暴露 /api/rules。</div>
+      </section>
+    `;
+    return;
+  }
+
+  const query = (searchInput.value || "").trim().toLowerCase();
+  const types = Array.from(new Set(rules.map((item) => item.rule_type))).sort();
+  const filtered = rules.filter((rule) => {
+    if (state.ruleType && rule.rule_type !== state.ruleType) {
+      return false;
+    }
+    if (!query) {
+      return true;
+    }
+    return JSON.stringify(rule).toLowerCase().includes(query);
+  });
+
+  viewRoot.innerHTML = `
+    <section class="rules-view">
+      <div class="rules-head">
+        <div>
+          <h2>规则/知识库</h2>
+          <p class="details">${escapeHtml(catalog.version || "")} · ${escapeHtml(catalog.focus || "")}</p>
+        </div>
+        <div class="rules-count">${filtered.length} / ${rules.length}</div>
+      </div>
+      <div class="rule-type-filter">
+        <button class="rule-type-chip ${state.ruleType ? "" : "active"}" data-rule-type="">全部</button>
+        ${types.map((type) => `
+          <button class="rule-type-chip ${state.ruleType === type ? "active" : ""}" data-rule-type="${escapeHtml(type)}">
+            ${escapeHtml(ruleTypeLabel(type))}
+          </button>
+        `).join("")}
+      </div>
+      <div class="rules-table-wrap">
+        <table class="rules-table">
+          <thead>
+            <tr>
+              <th>规则</th>
+              <th>类型</th>
+              <th>条件</th>
+              <th>判断与动作</th>
+              <th>证据与复判</th>
+              <th>来源</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map(renderRuleRow).join("") || `<tr><td colspan="5" class="empty">没有匹配规则</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderRuleRow(rule) {
+  const output = rule.output || {};
+  const condition = Object.entries(rule.condition || {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("；");
+  const outputLines = [
+    output.cause ? `根因：${output.cause}` : "",
+    output.disposition ? `处置：${output.disposition}` : "",
+    output.evidence ? `证据：${output.evidence}` : "",
+    output.action ? `动作：${output.action}` : "",
+    output.reason ? `原因：${output.reason}` : "",
+    output.applies_when ? `适用：${output.applies_when}` : "",
+    output.not_sufficient_when ? `不足：${output.not_sufficient_when}` : "",
+    output.first_check ? `首查：${output.first_check}` : "",
+  ].filter(Boolean);
+  const evidenceLines = [
+    output.evidence_required ? `所需证据：${[].concat(output.evidence_required).join("、")}` : "",
+    output.recheck_method ? `复判：${output.recheck_method}` : "",
+    output.confidence_base != null ? `基础置信度：${Math.round(Number(output.confidence_base) * 100)}%` : "",
+  ].filter(Boolean);
+  return `
+    <tr>
+      <td>
+        <strong>${escapeHtml(rule.rule_id)}</strong>
+        ${rule.priority ? `<div><span class="badge">${escapeHtml(rule.priority)}</span></div>` : ""}
+      </td>
+      <td>${escapeHtml(ruleTypeLabel(rule.rule_type))}</td>
+      <td class="details">${escapeHtml(condition || "-")}</td>
+      <td class="details">${outputLines.map(escapeHtml).join("<br>") || "-"}</td>
+      <td class="details">${evidenceLines.map(escapeHtml).join("<br>") || "-"}</td>
+      <td class="details">${escapeHtml(rule.source || "-")}</td>
+    </tr>
+  `;
+}
+
+function ruleTypeLabel(type) {
+  const labels = {
+    scope_root_cause: "范围根因",
+    trend_root_cause: "趋势根因",
+    evidence_root_cause: "证据根因",
+    exclusion_check: "排除项",
+    process_review: "工艺复核",
+    event_cause: "事件根因",
+    abnormal_cause: "实时异常根因",
+    disposition: "处置策略",
+  };
+  return labels[type] || type || "-";
+}
 
 function renderRankPanel(title, rows, labelFn, valueFn) {
   return `
@@ -604,5 +988,10 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+state.activeView = initialView();
+document.querySelectorAll(".tab").forEach((item) => {
+  item.classList.toggle("active", item.dataset.view === state.activeView);
+});
 
 loadData().then(startLivePolling);

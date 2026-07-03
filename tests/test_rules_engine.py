@@ -31,7 +31,7 @@ class RulesEngineTest(unittest.TestCase):
 
         patterns = {(case["defect_type"], case["abnormal_pattern"]) for case in cases}
         self.assertIn(("少锡", "同点多板异常"), patterns)
-        self.assertIn(("多锡", "同一元件多Pad异常"), patterns)
+        self.assertIn(("多锡", "同元件多Pad异常"), patterns)
         self.assertIn(("少锡", "整板趋势异常"), patterns)
 
         low_risk = [
@@ -40,6 +40,14 @@ class RulesEngineTest(unittest.TestCase):
         ][0]
         self.assertEqual(low_risk["abnormal_pattern"], "单点偶发异常")
         self.assertFalse(low_risk["create_quality_case"])
+        self.assertTrue(low_risk["cause_candidates"])
+        self.assertTrue(all("rule_id" in item and "rule_source" in item for item in low_risk["cause_candidates"]))
+
+        high_risk = [
+            item for item in abnormals
+            if item["abnormal_pattern"] == "同点多板异常"
+        ][0]
+        self.assertEqual(high_risk["root_cause_guess"], [item["cause"] for item in high_risk["cause_candidates"]])
 
         summary = build_dashboard_summary(abnormals, cases)
         self.assertEqual(summary["abnormal_count"], 11)
@@ -51,6 +59,7 @@ class RulesEngineTest(unittest.TestCase):
         top = build_dashboard_top(abnormals, cases)
         self.assertEqual(top["top_components"][0]["component"], "R125")
         self.assertEqual(top["top_patterns"][0]["abnormal_pattern"], "整板趋势异常")
+        self.assertTrue(cases[0]["cause_candidates"])
 
     def test_affected_model_row_mapping(self) -> None:
         row = normalize_affected_model_row({

@@ -2,12 +2,12 @@
 
 Serves the static frontend (``web/``) and the generated data (``output/``) from
 the project root on one port, re-runs the analysis pipeline on demand, and
-watches the over_volume table so new data triggers an automatic update. Pure
+watches the active full SPI table so new data triggers an automatic update. Pure
 standard library, no dependencies.
 
     python3 serve.py                      # run pipeline, watch, serve on :8502
     python3 serve.py --port 8080
-    python3 serve.py --watch-interval 10  # poll over_volume every 10s
+    python3 serve.py --watch-interval 10  # poll full_excel0623 every 10s
     python3 serve.py --no-watch           # disable auto-update
     python3 serve.py --no-refresh-on-start
 
@@ -16,6 +16,12 @@ Endpoints:
     GET  /web/*         -> static frontend files
     GET  /output/*      -> generated JSON data
     POST /api/refresh   -> re-run pipeline, return per-stage status + version
+    GET  /api/datasource -> current database config, password masked
+    POST /api/datasource -> save database config
+    POST /api/datasource/test -> test a database config
+    POST /api/drilldown/chat -> rule-based Q&A for one trigger
+    GET  /api/ontology  -> code-native SMT ontology snapshot
+    GET  /api/rules     -> executable rule catalog for review
     GET  /api/status    -> freshness of each output file (no recompute)
     GET  /api/live      -> data version + last update time for live polling
 """
@@ -29,8 +35,15 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from smt_quality_agent.datasource import (
+    masked_datasource,
+    save_datasource,
+    test_datasource,
+)
+from smt_quality_agent.drilldown_chat import build_rule_chat_response
+from smt_quality_agent.knowledge_base import rule_catalog
+from smt_quality_agent.ontology import ontology_snapshot
 from smt_quality_agent.pipeline import (
-    DEFAULT_DATABASE,
     OUTPUT_DIR,
     STAGE_FILES,
     over_volume_fingerprint,
@@ -40,7 +53,7 @@ from smt_quality_agent.pipeline import (
 ROOT = Path(__file__).resolve().parent
 DEFAULT_PORT = 8502
 DEFAULT_WATCH_INTERVAL = 5
-DATABASE = DEFAULT_DATABASE
+DATABASE_OVERRIDE: str | None = None
 
 # Serializes pipeline runs so manual refresh and the watcher never write the
 # output files concurrently.
@@ -63,7 +76,7 @@ def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def run_and_record(database: str) -> dict:
+def run_and_record(database: str | None) -> dict:
     """Run the pipeline under the lock and bump the live version."""
     with _pipeline_lock:
         report = run_pipeline(database)
@@ -80,10 +93,22 @@ def run_and_record(database: str) -> dict:
     return report
 
 
-class Watcher(threading.Thread):
-    """Polls over_volume; re-runs the pipeline when its fingerprint changes."""
+def load_drilldown_trigger(trigger_id: str) -> dict:
+    path = OUTPUT_DIR / "drilldown.json"
+    if not path.exists():
+        raise FileNotFoundError("output/drilldown.json does not exist")
+    with path.open("r", encoding="utf-8") as file:
+        report = json.load(file)
+    for trigger in report.get("triggers", []):
+        if trigger.get("trigger_id") == trigger_id:
+            return trigger
+    raise KeyError(f"unknown trigger_id: {trigger_id}")
 
-    def __init__(self, database: str, interval: int):
+
+class Watcher(threading.Thread):
+    """Polls the configured full SPI table and refreshes on change."""
+
+    def __init__(self, database: str | None, interval: int):
         super().__init__(daemon=True)
         self.database = database
         self.interval = interval
@@ -100,7 +125,7 @@ class Watcher(threading.Thread):
                     _live["last_error"] = None
                     changed = fingerprint != _live["fingerprint"]
                 if changed:
-                    print(f"[watch] over_volume changed -> {fingerprint}, refreshing")
+                    print(f"[watch] datasource changed -> {fingerprint}, refreshing")
                     run_and_record(self.database)
             except Exception as exc:  # noqa: BLE001 - keep the watcher alive
                 with _state_lock:
@@ -125,9 +150,47 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if not length:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        return json.loads(raw) if raw else {}
+
     def do_POST(self) -> None:  # noqa: N802 - required name
-        if self.path.rstrip("/") == "/api/refresh":
-            self._send_json(run_and_record(DATABASE))
+        path = self.path.split("?", 1)[0].rstrip("/")
+        if path == "/api/refresh":
+            self._send_json(run_and_record(DATABASE_OVERRIDE))
+            return
+        if path == "/api/datasource/test":
+            try:
+                self._send_json(test_datasource(self._read_json()))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+            return
+        if path == "/api/datasource":
+            try:
+                config = save_datasource(self._read_json())
+                self._send_json(masked_datasource(config))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+            return
+        if path == "/api/drilldown/chat":
+            try:
+                payload = self._read_json()
+                trigger = load_drilldown_trigger(str(payload.get("trigger_id") or ""))
+                self._send_json(build_rule_chat_response(trigger, str(payload.get("question") or "")))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Unknown endpoint")
 
@@ -141,9 +204,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path.rstrip("/") == "/api/status":
             self._send_json(self._status_report())
             return
+        if path.rstrip("/") == "/api/datasource":
+            self._send_json(masked_datasource())
+            return
         if path.rstrip("/") == "/api/live":
             with _state_lock:
                 self._send_json(dict(_live))
+            return
+        if path.rstrip("/") == "/api/ontology":
+            self._send_json(ontology_snapshot())
+            return
+        if path.rstrip("/") == "/api/rules":
+            self._send_json(rule_catalog())
             return
         super().do_GET()
 
@@ -174,12 +246,12 @@ class Handler(SimpleHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--database", default=DEFAULT_DATABASE)
+    parser.add_argument("--database", default=None, help="override datasource database name")
     parser.add_argument(
         "--watch-interval",
         type=int,
         default=DEFAULT_WATCH_INTERVAL,
-        help="seconds between over_volume change checks (default 5)",
+        help="seconds between datasource change checks (default 5)",
     )
     parser.add_argument("--no-watch", action="store_true", help="disable auto-update")
     parser.add_argument(
@@ -189,30 +261,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    global DATABASE
-    DATABASE = args.database
+    global DATABASE_OVERRIDE
+    DATABASE_OVERRIDE = args.database
     os.chdir(ROOT)
 
     if not args.no_refresh_on_start:
         print("启动前先跑一次 pipeline ...")
-        report = run_and_record(DATABASE)
+        report = run_and_record(DATABASE_OVERRIDE)
         for stage in report["stages"]:
             mark = "OK " if stage["ok"] else "FAIL"
             extra = f"{stage.get('rows', 0)} 行 {stage['ms']}ms" if stage["ok"] else stage.get("error", "")
             print(f"  [{mark}] {stage['stage']}: {extra}")
     else:
-        # Seed the fingerprint so the watcher does not fire spuriously at start.
-        try:
-            with _state_lock:
-                _live["fingerprint"] = over_volume_fingerprint(DATABASE)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[warn] 初始指纹获取失败: {exc}")
+        # Do not block cached-mode startup on database availability. The
+        # background watcher will establish a fingerprint when PostgreSQL is
+        # reachable and refresh from that point onward.
+        with _state_lock:
+            _live["fingerprint"] = None
 
     watcher = None
     if not args.no_watch:
-        watcher = Watcher(DATABASE, args.watch_interval)
+        watcher = Watcher(DATABASE_OVERRIDE, args.watch_interval)
         watcher.start()
-        print(f"实时监听已开启: 每 {args.watch_interval}s 检查 over_volume")
+        print(f"实时监听已开启: 每 {args.watch_interval}s 检查数据源")
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
     print(f"\n服务已启动: http://0.0.0.0:{args.port}/  (Ctrl+C 停止)")

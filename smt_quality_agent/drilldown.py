@@ -4,11 +4,26 @@ from datetime import datetime
 from typing import Any
 
 from smt_quality_agent.affected_model import split_component_pad
+from smt_quality_agent.knowledge_base import (
+    FALLBACK_ROOT_CAUSE,
+    PARAMETER_DRIFT_ROOT_CAUSE,
+    PARAMETER_RECOVERY_ROOT_CAUSE,
+    PERIODIC_ROOT_CAUSE,
+    RECHECK_CRITERIA,
+    SPI_FALSE_ALARM_ROOT_CAUSE,
+    disposition_for,
+    event_cause_candidates,
+    event_scope_for_category,
+    root_cause_candidate_from_rule,
+    scope_root_cause_candidate,
+    trend_root_cause_candidate,
+)
+from smt_quality_agent.ontology import ontology_ids_for
 from smt_quality_agent.param_correlation import (
+    BOARD_WIDE_MIN_BOARD_ROWS,
     BOARD_WIDE_NG_SHARE,
     DEFECT_MAIN_METRIC,
     DEFECT_NAME_CN,
-    EVENT_RULES,
     METRIC_FIELDS,
     METRIC_LABELS,
     PRECURSOR_RISE_THRESHOLD,
@@ -17,6 +32,7 @@ from smt_quality_agent.param_correlation import (
     check_parameters,
     is_ng,
     linear_slope,
+    normalize_defect_key,
     parse_fdate,
     tail_consecutive_rise,
 )
@@ -26,8 +42,16 @@ from smt_quality_agent.param_correlation import (
 # a drill-down package.
 TRIGGER_RUN_BOARDS = 3
 
-# How many of the pad's records before and after the trigger run to include.
-WINDOW_RECORDS = 300
+# How many of the pad's records before and after the trigger run to include in
+# the trend chart. Kept separate from the full SPI context window below.
+PAD_SERIES_WINDOW = 300
+
+# How many full SPI detail rows before and after the trigger run to include as
+# context evidence. This is intentionally not limited to the trigger pad.
+FULL_SPI_CONTEXT_WINDOW = 500
+
+# Backward-compatible name used by existing tests and frontend wording.
+WINDOW_RECORDS = PAD_SERIES_WINDOW
 
 # Pre-trigger PASS records needed before baseline statistics are trusted.
 BASELINE_MIN_RECORDS = 5
@@ -53,6 +77,16 @@ PLAN_EXTRA_FIELDS = ("printmode",)
 # treated as a real setpoint only when it changes on at most this share of
 # board-to-board transitions.
 SETPOINT_MAX_CHANGE_SHARE = 0.34
+
+# Local-area scope: several NG pads clustered inside a small share of the
+# board-coordinate range should be treated differently from a single pad or a
+# board-wide trend.
+LOCAL_AREA_MIN_NG_ROWS = 3
+LOCAL_AREA_MAX_SPAN_SHARE = 0.35
+
+# Strong SPI false-alarm signal: the row is labelled NG, but the defect's main
+# metric does not show a meaningful deviation.
+SPI_FALSE_ALARM_METRIC_THRESHOLD = 20.0
 
 
 def build_pad_points(rows: list[dict[str, Any]]) -> dict[str, list[list[dict[str, Any]]]]:
@@ -211,23 +245,28 @@ def analyze_scope(
     trigger_points: list[dict[str, Any]],
     sibling_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    max_share = max(
-        (point["board_ng_count"] / point["board_row_count"])
+    board_shares = [
+        (point["board_ng_count"] / point["board_row_count"], point["board_row_count"])
         for point in trigger_points
         if point["board_row_count"]
-    )
+    ]
+    max_share = max(share for share, _ in board_shares)
+    # Board-wide needs both a high NG share and enough recorded points on the
+    # board — a board with a handful of rows reaches 50% trivially.
+    qualified_shares = [
+        share for share, rows in board_shares
+        if share >= BOARD_WIDE_NG_SHARE and rows >= BOARD_WIDE_MIN_BOARD_ROWS
+    ]
     ng_siblings = [item for item in sibling_summaries if item["trigger_ng_count"] > 0]
 
-    if max_share >= BOARD_WIDE_NG_SHARE:
+    if qualified_shares:
         kind = "board"
-        rule_scope = "整板大面积"
         detail = (
-            f"触发板上最多 {max_share * 100:.0f}% 的检测点同时异常，"
+            f"触发板上最多 {max(qualified_shares) * 100:.0f}% 的检测点同时异常，"
             "为整板性失效，问题不局限于该焊盘。"
         )
     elif ng_siblings:
         kind = "component"
-        rule_scope = "局部焊盘"
         names = "、".join(item["pad_name"] for item in ng_siblings)
         detail = (
             f"同元件焊盘 {names} 在触发板上同步判 NG——异常波及同一元件的多个焊盘，"
@@ -235,7 +274,6 @@ def analyze_scope(
         )
     else:
         kind = "single"
-        rule_scope = "局部焊盘"
         detail = (
             "同元件其余焊盘在触发板上全部正常——异常孤立于该焊盘，"
             "优先排查该 Pad 对应的钢网单孔状态。"
@@ -243,7 +281,6 @@ def analyze_scope(
 
     return {
         "kind": kind,
-        "rule_scope": rule_scope,
         "max_board_ng_share": round(max_share, 4),
         "ng_sibling_pads": [item["pad_name"] for item in ng_siblings],
         "detail": detail,
@@ -497,6 +534,554 @@ def build_param_series(window_points: list[dict[str, Any]]) -> dict[str, Any]:
     return {"fields": fields, "series": {name: series[name] for name in fields}}
 
 
+def full_spi_sort_key(item: tuple[int, dict[str, Any]]) -> tuple[Any, str, str, int]:
+    index, row = item
+    return (
+        parse_fdate(str(row.get("fdate") or "")) or datetime.min,
+        str(row.get("barcode") or ""),
+        str(row.get("compname") or ""),
+        index,
+    )
+
+
+def compact_spi_row(
+    row: dict[str, Any],
+    index: int,
+    trigger_row_ids: set[int],
+    component: str,
+    pad_name: str,
+) -> dict[str, Any]:
+    row_component, row_pad = split_component_pad(str(row.get("compname") or ""))
+    return {
+        "global_seq": index,
+        "time": str(row.get("fdate") or ""),
+        "board_sn": str(row.get("barcode") or ""),
+        "model": str(row.get("cmodel") or ""),
+        "machine": str(row.get("machinename") or ""),
+        "component": row_component,
+        "pad": row_pad,
+        "pad_name": str(row.get("compname") or ""),
+        "px": as_float(row.get("comp_px")),
+        "py": as_float(row.get("comp_py")),
+        "defect_type": str(row.get("comp_errname") or "").strip(),
+        "is_ng": is_ng(row),
+        "is_trigger_row": id(row) in trigger_row_ids,
+        "is_same_component": row_component == component,
+        "is_same_pad": str(row.get("compname") or "") == pad_name,
+        "values": {
+            field: round(value, 2) if value is not None else None
+            for field in METRIC_FIELDS
+            for value in [as_float(row.get(field))]
+        },
+    }
+
+
+def build_full_spi_window(
+    rows: list[dict[str, Any]],
+    trigger_points: list[dict[str, Any]],
+    component: str,
+    pad_name: str,
+) -> dict[str, Any]:
+    ordered = sorted(enumerate(rows), key=full_spi_sort_key)
+    positions = {id(row): position for position, (_, row) in enumerate(ordered)}
+    trigger_row_ids = {id(point["row"]) for point in trigger_points}
+    trigger_positions = [
+        positions[row_id] for row_id in trigger_row_ids if row_id in positions
+    ]
+
+    if not trigger_positions:
+        return {
+            "scope": "full_spi",
+            "order_by": "fdate, barcode, compname, source_index",
+            "requested_before": FULL_SPI_CONTEXT_WINDOW,
+            "requested_after": FULL_SPI_CONTEXT_WINDOW,
+            "actual_before": 0,
+            "actual_after": 0,
+            "rows": [],
+        }
+
+    start_position = min(trigger_positions)
+    end_position = max(trigger_positions)
+    window_start = max(0, start_position - FULL_SPI_CONTEXT_WINDOW)
+    window_end = min(len(ordered) - 1, end_position + FULL_SPI_CONTEXT_WINDOW)
+    compact_rows = [
+        compact_spi_row(row, source_index, trigger_row_ids, component, pad_name)
+        for source_index, row in ordered[window_start:window_end + 1]
+    ]
+    return {
+        "scope": "full_spi",
+        "order_by": "fdate, barcode, compname, source_index",
+        "requested_before": FULL_SPI_CONTEXT_WINDOW,
+        "requested_after": FULL_SPI_CONTEXT_WINDOW,
+        "actual_before": start_position - window_start,
+        "actual_after": window_end - end_position,
+        "trigger_start_seq": start_position - window_start,
+        "trigger_end_seq": end_position - window_start,
+        "rows": compact_rows,
+    }
+
+
+def direction_matches(defect_type: str, direction: str) -> bool:
+    normalized = defect_type.lower()
+    if direction == "多锡":
+        return "over" in normalized
+    if direction == "少锡":
+        return "insufficient" in normalized or "less" in normalized or "under" in normalized
+    return False
+
+
+def coordinate_span(rows: list[dict[str, Any]], field: str) -> float | None:
+    values = [row.get(field) for row in rows if row.get(field) is not None]
+    if len(values) < 2:
+        return None
+    return max(values) - min(values)
+
+
+def analyze_local_area(trigger_board_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    ng_rows = [
+        row for row in trigger_board_rows
+        if row["is_ng"] and row.get("px") is not None and row.get("py") is not None
+    ]
+    coordinate_rows = [
+        row for row in trigger_board_rows
+        if row.get("px") is not None and row.get("py") is not None
+    ]
+    distinct_ng_pads = {row["pad_name"] for row in ng_rows if row["pad_name"]}
+    if len(distinct_ng_pads) < LOCAL_AREA_MIN_NG_ROWS or len(coordinate_rows) < LOCAL_AREA_MIN_NG_ROWS:
+        return {
+            "detected": False,
+            "ng_rows": len(ng_rows),
+            "distinct_ng_pads": len(distinct_ng_pads),
+            "detail": (
+                f"触发板仅涉及 {len(distinct_ng_pads)} 个不同 NG Pad，"
+                "不足以判定为局部区域异常。"
+            ),
+        }
+
+    board_x_span = coordinate_span(coordinate_rows, "px")
+    board_y_span = coordinate_span(coordinate_rows, "py")
+    ng_x_span = coordinate_span(ng_rows, "px")
+    ng_y_span = coordinate_span(ng_rows, "py")
+    if not board_x_span or not board_y_span or ng_x_span is None or ng_y_span is None:
+        return {
+            "detected": False,
+            "ng_rows": len(ng_rows),
+            "detail": "坐标范围不足，未判定为局部区域异常。",
+        }
+
+    x_share = ng_x_span / board_x_span
+    y_share = ng_y_span / board_y_span
+    detected = x_share <= LOCAL_AREA_MAX_SPAN_SHARE and y_share <= LOCAL_AREA_MAX_SPAN_SHARE
+    return {
+        "detected": detected,
+        "ng_rows": len(ng_rows),
+        "distinct_ng_pads": len(distinct_ng_pads),
+        "x_span_share": round(x_share, 4),
+        "y_span_share": round(y_share, 4),
+        "detail": (
+            f"触发板 NG 点集中在约 {x_share * 100:.0f}% x {y_share * 100:.0f}% 的坐标范围内，"
+            "符合局部区域异常特征。"
+            if detected else
+            f"触发板 NG 点坐标跨度约 {x_share * 100:.0f}% x {y_share * 100:.0f}%，未形成明显局部聚集。"
+        ),
+    }
+
+
+def build_context_summary(
+    full_spi_window: dict[str, Any],
+    component: str,
+    pad_name: str,
+    direction: str,
+    trigger_board_sns: set[str],
+) -> dict[str, Any]:
+    rows = full_spi_window.get("rows", [])
+    ng_rows = [row for row in rows if row["is_ng"]]
+    same_component_ng = [
+        row for row in ng_rows if row["component"] == component
+    ]
+    same_pad_ng = [row for row in ng_rows if row["pad_name"] == pad_name]
+    same_direction_ng = [
+        row for row in ng_rows if direction_matches(row["defect_type"], direction)
+    ]
+    trigger_board_rows = [
+        row for row in rows if row["board_sn"] in trigger_board_sns
+    ]
+    trigger_board_ng = [row for row in trigger_board_rows if row["is_ng"]]
+    local_area = analyze_local_area(trigger_board_rows)
+
+    defect_counts: dict[str, int] = {}
+    component_counts: dict[str, int] = {}
+    pad_counts: dict[str, int] = {}
+    for row in ng_rows:
+        defect = row["defect_type"] or "NG"
+        defect_counts[defect] = defect_counts.get(defect, 0) + 1
+        component_counts[row["component"]] = component_counts.get(row["component"], 0) + 1
+        pad_counts[row["pad_name"]] = pad_counts.get(row["pad_name"], 0) + 1
+
+    def top_items(counts: dict[str, int], limit: int = 5) -> list[dict[str, Any]]:
+        return [
+            {"name": name, "count": count}
+            for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        ]
+
+    total = len(rows)
+    return {
+        "total_rows": total,
+        "ng_rows": len(ng_rows),
+        "ng_rate": round(len(ng_rows) / total, 4) if total else 0.0,
+        "same_direction_ng_rows": len(same_direction_ng),
+        "same_component_ng_rows": len(same_component_ng),
+        "same_pad_ng_rows": len(same_pad_ng),
+        "trigger_board_rows": len(trigger_board_rows),
+        "trigger_board_ng_rows": len(trigger_board_ng),
+        "local_area": local_area,
+        "dominant_defects": top_items(defect_counts),
+        "top_ng_components": top_items(component_counts),
+        "top_ng_pads": top_items(pad_counts),
+    }
+
+
+def classify_scope(
+    scope: dict[str, Any],
+    context_summary: dict[str, Any],
+    exclusions: dict[str, Any],
+) -> dict[str, Any]:
+    local_area = context_summary.get("local_area") or {}
+    if (exclusions.get("spi_false_alarm") or {}).get("status") == "suspect":
+        category = "疑似SPI假异常"
+        detail = "触发记录的缺陷标签与关键度量值不一致，需优先复核 SPI 程序、识别框和阈值。"
+    elif scope["kind"] == "board":
+        category = "整板同向"
+        detail = scope["detail"]
+    elif scope["kind"] == "component":
+        category = "同元件多Pad异常"
+        detail = scope["detail"]
+    elif local_area.get("detected"):
+        category = "局部区域"
+        detail = local_area["detail"]
+    elif context_summary["ng_rate"] >= BOARD_WIDE_NG_SHARE:
+        category = "整板同向"
+        detail = "前后全量 SPI 窗口 NG 占比较高，需要检查同线体/同设备的整体制程波动。"
+    else:
+        category = "单Pad孤立异常"
+        detail = "同元件和全量窗口没有显示明显扩散，优先锁定触发 Pad 的局部原因。"
+    return {
+        "category": category,
+        "detail": detail,
+    }
+
+
+def build_exclusion_checks(
+    trigger_points: list[dict[str, Any]],
+    change_type: dict[str, Any],
+    recovery: dict[str, Any],
+    full_spi_window: dict[str, Any],
+    metric_field: str,
+) -> dict[str, Any]:
+    trigger_has_recheck = any(point["is_recheck"] for point in trigger_points)
+    window_rows = full_spi_window.get("rows", [])
+    trigger_rows = [row for row in window_rows if row["is_trigger_row"]]
+    mixed_models = len({row["model"] for row in trigger_rows if row["model"]}) > 1
+    mixed_boards = len({row["board_sn"] for row in trigger_rows if row["board_sn"]}) < TRIGGER_RUN_BOARDS
+
+    data_flags = []
+    if trigger_has_recheck:
+        data_flags.append("触发段含复测记录")
+    if mixed_models:
+        data_flags.append("触发段跨机种")
+    if mixed_boards:
+        data_flags.append("触发段生产板数量不足")
+
+    spi_flags = []
+    trigger_metric_values = [
+        point["values"].get(metric_field) for point in trigger_points
+        if point["is_ng"] and point["values"].get(metric_field) is not None
+    ]
+    if change_type["kind"] == "unknown":
+        spi_flags.append("事件前正常样本不足")
+    if trigger_metric_values and max(trigger_metric_values) < SPI_FALSE_ALARM_METRIC_THRESHOLD:
+        spi_flags.append("触发 NG 记录的主指标偏差不明显")
+    if recovery["kind"] == "recovered" and not recovery.get("related_param_events"):
+        spi_flags.append("后续自行恢复或存在未记录人工处置")
+    strong_spi_flags = {"触发 NG 记录的主指标偏差不明显"}
+    spi_status = (
+        "suspect" if any(flag in strong_spi_flags for flag in spi_flags)
+        else "review" if spi_flags else "pass"
+    )
+
+    return {
+        "data_continuity": {
+            "status": "pass" if not data_flags else "review",
+            "flags": data_flags,
+            "detail": "连续性检查未发现明显数据问题。" if not data_flags else "；".join(data_flags),
+        },
+        "spi_false_alarm": {
+            "status": spi_status,
+            "flags": spi_flags,
+            "detail": "未发现明显 SPI 假异常信号。" if not spi_flags else "；".join(spi_flags),
+        },
+    }
+
+
+def build_conclusion(
+    direction: str,
+    scope_classification: dict[str, Any],
+    change_type: dict[str, Any],
+    recovery: dict[str, Any],
+    periodicity: dict[str, Any],
+    parameter_check: dict[str, Any],
+    cause_candidates: list[dict[str, Any]],
+    exclusions: dict[str, Any],
+) -> dict[str, Any]:
+    """Collect root-cause candidates from the rule registry and rank them by
+    confidence_base — the knowledge base's explicit confidence ladder — instead
+    of an implicit insertion order."""
+    candidates: list[dict[str, Any]] = []
+
+    if exclusions["spi_false_alarm"]["status"] == "suspect":
+        candidates.append(root_cause_candidate_from_rule(
+            SPI_FALSE_ALARM_ROOT_CAUSE,
+            exclusions["spi_false_alarm"]["detail"],
+        ))
+
+    drifted = parameter_check.get("drifted") or []
+    if drifted:
+        names = "、".join(item["parameter"] for item in drifted[:3])
+        drift = root_cause_candidate_from_rule(
+            PARAMETER_DRIFT_ROOT_CAUSE,
+            PARAMETER_DRIFT_ROOT_CAUSE["evidence_template"].format(parameters=names),
+        )
+        drift["action"] = PARAMETER_DRIFT_ROOT_CAUSE["action_template"].format(parameters=names)
+        drift["evidence_level"] = "高" if not parameter_check.get("cross_model_baseline") else "中"
+        candidates.append(drift)
+
+    related = recovery.get("related_param_events") or []
+    if recovery["kind"] == "recovered" and related:
+        names = "、".join(sorted({item["parameter"] for item in related}))
+        recovered = root_cause_candidate_from_rule(
+            PARAMETER_RECOVERY_ROOT_CAUSE,
+            PARAMETER_RECOVERY_ROOT_CAUSE["evidence_template"].format(parameters=names),
+        )
+        recovered["action"] = PARAMETER_RECOVERY_ROOT_CAUSE["action_template"].format(parameters=names)
+        candidates.append(recovered)
+
+    if periodicity.get("periodic"):
+        gap = periodicity.get("mean_gap_boards")
+        evidence = (
+            PERIODIC_ROOT_CAUSE["evidence_template"].format(gap=gap)
+            if gap else periodicity["detail"]
+        )
+        candidates.append(root_cause_candidate_from_rule(PERIODIC_ROOT_CAUSE, evidence))
+
+    category = scope_classification["category"]
+    if category != "疑似SPI假异常":
+        category_rule = scope_root_cause_candidate(
+            direction, category, scope_classification["detail"],
+        )
+        if category_rule:
+            candidates.append(category_rule)
+
+    trend_rule = trend_root_cause_candidate(change_type["kind"], change_type["detail"])
+    if trend_rule and (change_type["kind"] != "step" or not drifted):
+        candidates.append(trend_rule)
+
+    candidates.extend(cause_candidates)
+    if not candidates:
+        candidates.append(root_cause_candidate_from_rule(FALLBACK_ROOT_CAUSE))
+
+    # Stable sort keeps collection order between equal weights; duplicate
+    # causes keep their strongest entry.
+    candidates.sort(key=lambda item: -item["confidence_base"])
+    assessments: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate["cause"] in {item["cause"] for item in assessments}:
+            continue
+        assessments.append(candidate)
+        if len(assessments) >= 3:
+            break
+
+    for priority, item in enumerate(assessments, 1):
+        item["priority"] = priority
+        item["ontology_ids"] = ontology_ids_for(
+            direction=direction, scope=category, cause=item["cause"],
+        )
+
+    confidence = "中"
+    if exclusions["data_continuity"]["status"] != "pass":
+        confidence = "低"
+    elif assessments[0]["evidence_level"] == "高":
+        confidence = "高"
+
+    return {
+        "category": category,
+        "direction": direction,
+        "confidence": confidence,
+        "root_cause_assessment": assessments,
+        "recheck_plan": RECHECK_CRITERIA,
+    }
+
+
+def build_analysis_contract(
+    trigger_id: str,
+    model: str,
+    machine: str,
+    component: str,
+    pad: str,
+    pad_name: str,
+    main_defect: str,
+    defect_cn: str,
+    direction: str,
+    start_time: str,
+    end_time: str,
+    run_length: int,
+    metric_label: str,
+    trigger_values: list[float],
+    change_type: dict[str, Any],
+    scope_classification: dict[str, Any],
+    context_summary: dict[str, Any],
+    exclusions: dict[str, Any],
+    recovery: dict[str, Any],
+    conclusion: dict[str, Any],
+) -> dict[str, Any]:
+    """The single authoritative conclusion payload for UI, chat, and closure
+    records. Everything user-facing about the judgment lives here; the rest of
+    the trigger package is chart-ready raw data."""
+    assessments = conclusion["root_cause_assessment"]
+    primary = assessments[0] if assessments else {}
+    category = scope_classification["category"]
+    confidence = conclusion["confidence"]
+    data_check = exclusions["data_continuity"]
+    spi_check = exclusions["spi_false_alarm"]
+
+    peak_text = (
+        f"，{metric_label}最高 {max(trigger_values):.1f}%" if trigger_values else ""
+    )
+    conclusion_text = (
+        f"焊盘 {pad_name} 连续 {run_length} 块生产板判 {main_defect}"
+        f"（{direction}）{peak_text}，Agent 判定为{category}。"
+    )
+
+    disposition = disposition_for(
+        data_status=data_check["status"],
+        spi_status=spi_check["status"],
+        category=category,
+        recovery_kind=recovery["kind"],
+        confidence=confidence,
+    )
+
+    evidence_summary = [
+        {
+            "name": "连续触发",
+            "value": f"{run_length} 块生产板",
+            "detail": "复测记录不参与连续生产板计数。",
+        },
+        {
+            "name": "趋势形态",
+            "value": change_type["verdict"],
+            "detail": change_type["detail"],
+        },
+        {
+            "name": "全量 SPI 窗口",
+            "value": (
+                f"{context_summary['total_rows']} 行 / "
+                f"NG {context_summary['ng_rows']} 行"
+            ),
+            "detail": (
+                f"同元件 NG {context_summary['same_component_ng_rows']} 行，"
+                f"同 Pad NG {context_summary['same_pad_ng_rows']} 行。"
+            ),
+        },
+        {
+            "name": "范围判断",
+            "value": category,
+            "detail": scope_classification["detail"],
+        },
+        {
+            "name": "恢复状态",
+            "value": recovery["verdict"],
+            "detail": recovery["detail"],
+        },
+    ]
+
+    evidence_tags = [
+        f"范围：{category}",
+        f"置信度：{confidence}",
+        f"窗口NG率：{context_summary['ng_rate'] * 100:.1f}%",
+        f"恢复：{recovery['verdict']}",
+    ]
+    if spi_check["status"] != "pass":
+        evidence_tags.append("SPI需复核")
+    if data_check["status"] != "pass":
+        evidence_tags.append("数据需复核")
+
+    return {
+        "version": "analysis-contract-v2",
+        "trigger": {
+            "trigger_id": trigger_id,
+            "agent_type": "consecutive_pad_root_cause",
+            "model": model,
+            "machine": machine,
+            "component": component,
+            "pad": pad,
+            "pad_name": pad_name,
+            "defect_type": main_defect,
+            "defect_cn": defect_cn,
+            "direction": direction,
+            "start_time": start_time,
+            "end_time": end_time,
+            "trigger_board_count": run_length,
+            "conclusion": conclusion_text,
+        },
+        "trend": {
+            "kind": change_type["kind"],
+            "verdict": change_type["verdict"],
+            "detail": change_type["detail"],
+        },
+        "scope": {
+            "category": category,
+            "detail": scope_classification["detail"],
+            "confidence": confidence,
+            "ontology_ids": ontology_ids_for(direction=direction, scope=category),
+        },
+        "evidence": {
+            "summary": evidence_summary,
+            "context": context_summary,
+            "exclusion_checks": [
+                {
+                    "name": "数据连续性",
+                    "status": data_check["status"],
+                    "detail": data_check["detail"],
+                },
+                {
+                    "name": "SPI 假异常",
+                    "status": spi_check["status"],
+                    "detail": spi_check["detail"],
+                },
+            ],
+            "tags": evidence_tags,
+        },
+        "root_cause_candidates": assessments,
+        "disposition": {
+            "priority": disposition["priority"],
+            "suggestion": disposition["disposition"],
+            "reason": disposition["reason"],
+            "primary_rule_id": primary.get("rule_id", "rule.unspecified"),
+            "primary_rule_source": primary.get("rule_source", "knowledge_base"),
+            "primary_cause": primary.get("cause", "待现场确认"),
+            "primary_evidence": primary.get("evidence", "现有数据不足以形成单一证据。"),
+            "primary_action": primary.get(
+                "action", "复核触发 Pad、同元件 Pad、原始 SPI 图像和事件时段设备记录。",
+            ),
+        },
+        "recheck": {
+            "recovery_kind": recovery["kind"],
+            "recovery_verdict": recovery["verdict"],
+            "recovery_detail": recovery["detail"],
+            "criteria": conclusion["recheck_plan"],
+        },
+    }
+
+
 def build_trigger_package(
     trigger_no: int,
     model: str,
@@ -508,12 +1093,14 @@ def build_trigger_package(
     rows_by_inspection_pad: dict[tuple[str, str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     start_idx, end_idx = run
+    trigger_id = f"TRG{trigger_no:03d}"
     component, pad = split_component_pad(pad_name)
     main_defect = main_defect_of_run(points, start_idx, end_idx)
-    metric_field = DEFECT_MAIN_METRIC.get(main_defect.lower(), "comp_avdp")
+    main_defect_key = normalize_defect_key(main_defect)
+    metric_field = DEFECT_MAIN_METRIC.get(main_defect_key, "comp_avdp")
     metric_label = METRIC_LABELS[metric_field]
-    defect_cn = DEFECT_NAME_CN.get(main_defect.lower(), main_defect)
-    direction = "多锡" if main_defect.lower().startswith("over") else "少锡"
+    defect_cn = DEFECT_NAME_CN.get(main_defect_key, main_defect)
+    direction = "多锡" if main_defect_key.startswith("over") else "少锡"
 
     window_start = max(0, start_idx - WINDOW_RECORDS)
     window_end = min(len(points) - 1, end_idx + WINDOW_RECORDS)
@@ -582,7 +1169,45 @@ def build_trigger_package(
     recovery = analyze_recovery(post_points, baseline, metric_field, trigger_end_seq, param_events)
     periodicity = analyze_periodicity(points)
     parameter_check = check_parameters(rows, trigger_board_sns, model)
-    causes = EVENT_RULES.get((direction, scope["rule_scope"]), [])
+    full_spi_window = build_full_spi_window(
+        rows, trigger_points_raw, component, pad_name,
+    )
+    context_summary = build_context_summary(
+        full_spi_window, component, pad_name, direction, trigger_board_sns,
+    )
+    exclusion_checks = build_exclusion_checks(
+        trigger_points_raw, change_type, recovery, full_spi_window, metric_field,
+    )
+    scope_classification = classify_scope(scope, context_summary, exclusion_checks)
+    cause_candidates = event_cause_candidates(
+        direction, event_scope_for_category(scope_classification["category"]),
+    )
+    conclusion = build_conclusion(
+        direction, scope_classification, change_type, recovery, periodicity,
+        parameter_check, cause_candidates, exclusion_checks,
+    )
+    analysis_contract = build_analysis_contract(
+        trigger_id=trigger_id,
+        model=model,
+        machine=str(rows[0].get("machinename") or "") if rows else "",
+        component=component,
+        pad=pad,
+        pad_name=pad_name,
+        main_defect=main_defect,
+        defect_cn=defect_cn,
+        direction=direction,
+        start_time=trigger_window_points[0]["time"],
+        end_time=trigger_window_points[-1]["time"],
+        run_length=run_length,
+        metric_label=metric_label,
+        trigger_values=trigger_values,
+        change_type=change_type,
+        scope_classification=scope_classification,
+        context_summary=context_summary,
+        exclusions=exclusion_checks,
+        recovery=recovery,
+        conclusion=conclusion,
+    )
 
     before_count = start_idx - window_start
     after_count = window_end - end_idx
@@ -617,7 +1242,8 @@ def build_trigger_package(
         point.pop("row", None)
 
     return {
-        "trigger_id": f"TRG{trigger_no:03d}",
+        "trigger_id": trigger_id,
+        "agent_type": "consecutive_pad_root_cause",
         "model": model,
         "machine": str(rows[0].get("machinename") or "") if rows else "",
         "component": component,
@@ -637,23 +1263,22 @@ def build_trigger_package(
             "after_count": after_count,
         },
         "series": window_points,
+        "full_spi_window": full_spi_window,
+        "analysis_contract": analysis_contract,
         "baseline": baseline,
         "param_events": param_events,
         "param_series": param_series,
-        "change_type": change_type,
-        "scope": scope,
-        "recovery": recovery,
-        "periodicity": periodicity,
         "parameter_check": parameter_check,
         "findings": findings,
-        "suggested_causes": [item[0] for item in causes],
-        "suggested_actions": [item[1] for item in causes],
         "siblings": siblings,
         "heatmap": build_heatmap(model_pads, trigger_board_keys),
     }
 
 
-def build_drilldown_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_drilldown_report(
+    rows: list[dict[str, Any]],
+    source_table: str = "l780db.public.full_excel0623",
+) -> dict[str, Any]:
     by_model = build_pad_points(rows)
     rows_by_inspection_pad = {
         (
@@ -679,12 +1304,15 @@ def build_drilldown_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source_table": "l780db.public.full_excel0608",
+        "source_table": source_table,
         "trigger_rule": f"同一焊盘连续 {TRIGGER_RUN_BOARDS} 块及以上生产板判 NG（复测不计入）",
         "window_records": WINDOW_RECORDS,
+        "pad_series_window_records": PAD_SERIES_WINDOW,
+        "full_spi_context_window_records": FULL_SPI_CONTEXT_WINDOW,
         "triggers": triggers,
         "caveats": [
-            "下钻窗口按该焊盘的检测记录截取，数据不足时如实标注实际条数。",
+            "趋势图窗口按该焊盘的检测记录截取，数据不足时如实标注实际条数。",
+            "full_spi_window 为触发点前后全量 SPI 明细上下文，不限于触发焊盘，用于范围判断和证据摘要。",
             "突变/渐变判别复用前兆分析阈值（斜率 ≥0.5%/板 且末段连续 ≥3 板上升判渐变）。",
         ],
     }

@@ -1,0 +1,309 @@
+@prefix smt: <https://example.com/smt-quality-agent/ontology#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+# Generated from smt_quality_agent/ontology.py — do not edit by hand.
+# Regenerate with: python3 -m smt_quality_agent.ontology
+
+smt:SMTQualityOntology
+    rdf:type smt:Ontology ;
+    rdfs:label "SMT Quality Agent Ontology"@en ;
+    rdfs:comment "锡膏印刷 + SPI 多锡/少锡异常管理本体。"@zh ;
+    smt:version "spi-printing-v2" ;
+    smt:focus "锡膏印刷 + SPI 多锡/少锡异常管理"@zh .
+
+smt:ProcessStep rdf:type rdfs:Class ; rdfs:label "工序"@zh .
+smt:InspectionMethod rdf:type rdfs:Class ; rdfs:label "检测方法"@zh .
+smt:DefectDirection rdf:type rdfs:Class ; rdfs:label "缺陷方向"@zh .
+smt:AbnormalScope rdf:type rdfs:Class ; rdfs:label "异常范围"@zh .
+smt:RootCauseCandidate rdf:type rdfs:Class ; rdfs:label "根因候选"@zh .
+smt:EvidenceType rdf:type rdfs:Class ; rdfs:label "证据类型"@zh .
+smt:ActionType rdf:type rdfs:Class ; rdfs:label "排查动作"@zh .
+smt:Disposition rdf:type rdfs:Class ; rdfs:label "处置方式"@zh .
+
+smt:verifiedBy rdf:type rdf:Property ; rdfs:label "由...验证"@zh .
+smt:observes rdf:type rdf:Property ; rdfs:label "观察到"@zh .
+smt:hasCandidateCause rdf:type rdf:Property ; rdfs:label "候选根因为"@zh .
+smt:requiresEvidence rdf:type rdf:Property ; rdfs:label "需要证据"@zh .
+smt:recommendsAction rdf:type rdf:Property ; rdfs:label "建议动作"@zh .
+smt:usesDisposition rdf:type rdf:Property ; rdfs:label "使用处置方式"@zh .
+smt:priority rdf:type rdf:Property ; rdfs:label "优先级"@zh .
+smt:direction rdf:type rdf:Property ; rdfs:label "缺陷方向值"@zh .
+smt:judgedBy rdf:type rdf:Property ; rdfs:label "判定口径"@zh .
+smt:version rdf:type rdf:Property ; rdfs:label "版本"@zh .
+smt:focus rdf:type rdf:Property ; rdfs:label "聚焦范围"@zh .
+
+smt:process.solder_paste_printing
+    rdf:type smt:ProcessStep ;
+    rdfs:label "锡膏印刷"@zh ;
+    rdfs:comment "当前 MVP 聚焦的制程步骤，负责将锡膏转移到 PCB Pad。"@zh ;
+    skos:altLabel "印刷"@zh, "printing"@zh ;
+    smt:verifiedBy smt:inspection.spi .
+
+smt:inspection.spi
+    rdf:type smt:InspectionMethod ;
+    rdfs:label "SPI 检测"@zh ;
+    rdfs:comment "锡膏印刷后的 3D/2D 检测数据来源。"@zh ;
+    skos:altLabel "SPI"@zh, "solder paste inspection"@zh ;
+    smt:observes smt:defect.over_volume ;
+    smt:observes smt:defect.insufficient_volume .
+
+smt:defect.over_volume
+    rdf:type smt:DefectDirection ;
+    rdfs:label "多锡"@zh ;
+    rdfs:comment "锡膏体积、面积或高度高于工艺窗口。"@zh ;
+    skos:altLabel "Over Volume"@zh, "过量"@zh ;
+    smt:direction "多锡"@zh .
+
+smt:defect.insufficient_volume
+    rdf:type smt:DefectDirection ;
+    rdfs:label "少锡"@zh ;
+    rdfs:comment "锡膏体积、面积或高度低于工艺窗口。"@zh ;
+    skos:altLabel "Insufficient Volume"@zh, "少量"@zh ;
+    smt:direction "少锡"@zh .
+
+smt:scope.board_same_direction
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "整板同向"@zh ;
+    rdfs:comment "下钻口径：触发板或全量窗口内多个位置呈现同方向异常，优先判断整板制程条件。"@zh ;
+    skos:altLabel "整板同向趋势"@zh ;
+    smt:judgedBy "drilldown"@zh ;
+    smt:priority 1 ;
+    smt:hasCandidateCause smt:root_cause.board_printing_condition_drift ;
+    smt:hasCandidateCause smt:root_cause.board_paste_supply_or_print_action ;
+    smt:requiresEvidence smt:evidence.board_same_direction_trend ;
+    smt:usesDisposition smt:disposition.immediate_field_check .
+
+smt:scope.board_trend
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "整板趋势异常"@zh ;
+    rdfs:comment "实时口径：单板异常点占比达到阈值（≥5% 中风险、≥10% 高风险），不区分方向。"@zh ;
+    smt:judgedBy "realtime"@zh ;
+    smt:priority 1 .
+
+smt:scope.component_multi_pad
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "同元件多Pad异常"@zh ;
+    rdfs:comment "同一元件多个 Pad 同步异常，优先判断局部贴合、堵孔、支撑或污染。"@zh ;
+    skos:altLabel "同一元件多Pad异常"@zh ;
+    smt:judgedBy "realtime+drilldown"@zh ;
+    smt:priority 2 ;
+    smt:hasCandidateCause smt:root_cause.component_area_stencil_contamination ;
+    smt:hasCandidateCause smt:root_cause.component_area_blockage_or_support ;
+    smt:requiresEvidence smt:evidence.component_multi_pad_ng .
+
+smt:scope.consecutive_same_pad
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "连续3板同点异常"@zh ;
+    rdfs:comment "下钻触发口径：同一产品、元件、Pad 连续（中间无 PASS 生产板）≥3 块生产板同方向异常，复测不计入。"@zh ;
+    skos:altLabel "连续同点异常"@zh ;
+    smt:judgedBy "drilldown"@zh ;
+    smt:priority 3 ;
+    smt:requiresEvidence smt:evidence.full_spi_window ;
+    smt:requiresEvidence smt:evidence.same_pad_consecutive_ng .
+
+smt:scope.repeated_same_pad
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "同点多板异常"@zh ;
+    rdfs:comment "实时口径：同一产品、元件、Pad 在 ≥3 块不同生产板重复异常，不要求连续。"@zh ;
+    smt:judgedBy "realtime"@zh ;
+    smt:priority 3 .
+
+smt:scope.single_pad_isolated
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "单Pad孤立异常"@zh ;
+    rdfs:comment "下钻口径：连续触发局限于单 Pad，同元件其他 Pad 与全量窗口均未见扩散。"@zh ;
+    smt:judgedBy "drilldown"@zh ;
+    smt:priority 4 ;
+    smt:hasCandidateCause smt:root_cause.stencil_single_aperture_residue ;
+    smt:hasCandidateCause smt:root_cause.stencil_single_aperture_blockage .
+
+smt:scope.single_point_random
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "单点偶发异常"@zh ;
+    rdfs:comment "实时口径：单个 Pad 偶发异常，优先做快速复核和短程复判。"@zh ;
+    skos:altLabel "单点偶发"@zh ;
+    smt:judgedBy "realtime"@zh ;
+    smt:priority 4 ;
+    smt:usesDisposition smt:disposition.fast_single_point_check .
+
+smt:scope.local_area
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "局部区域"@zh ;
+    rdfs:comment "同一局部区域多个 Pad 或元件异常，优先判断局部钢网、PCB 支撑和贴合状态。"@zh ;
+    skos:altLabel "区域异常"@zh ;
+    smt:judgedBy "drilldown"@zh ;
+    smt:hasCandidateCause smt:root_cause.local_stencil_contamination ;
+    smt:hasCandidateCause smt:root_cause.local_stencil_blockage_or_rolling ;
+    smt:usesDisposition smt:disposition.immediate_field_check .
+
+smt:scope.suspected_spi_false_alarm
+    rdf:type smt:AbnormalScope ;
+    rdfs:label "疑似SPI假异常"@zh ;
+    rdfs:comment "排除项驱动的归类：NG 标签与主指标偏差不一致，先复核 SPI 程序/识别框/阈值，再谈物理根因。"@zh ;
+    smt:judgedBy "drilldown"@zh ;
+    smt:hasCandidateCause smt:root_cause.spi_program_false_alarm ;
+    smt:requiresEvidence smt:evidence.raw_spi_image .
+
+smt:root_cause.stencil_single_aperture_residue
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "钢网单孔底部残锡或开口异常"@zh ;
+    rdfs:comment "单 Pad 多锡的高频候选根因。"@zh ;
+    smt:recommendsAction smt:action.inspect_single_stencil_aperture .
+
+smt:root_cause.stencil_single_aperture_blockage
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "钢网单孔堵塞或脱模不良"@zh ;
+    rdfs:comment "单 Pad 少锡的高频候选根因。"@zh ;
+    smt:recommendsAction smt:action.clean_blocked_aperture .
+
+smt:root_cause.component_area_stencil_contamination
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "元件区域钢网底部污染或贴合不良"@zh ;
+    rdfs:comment "同元件多 Pad 多锡的候选根因。"@zh ;
+    smt:recommendsAction smt:action.inspect_component_area .
+
+smt:root_cause.component_area_blockage_or_support
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "元件区域堵孔或局部支撑不足"@zh ;
+    rdfs:comment "同元件多 Pad 少锡的候选根因。"@zh ;
+    smt:recommendsAction smt:action.inspect_component_area .
+
+smt:root_cause.local_stencil_contamination
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "局部钢网污染、变形或支撑异常"@zh ;
+    rdfs:comment "局部区域多锡的候选根因。"@zh .
+
+smt:root_cause.local_stencil_blockage_or_rolling
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "局部钢网堵塞、锡膏滚动或支撑异常"@zh ;
+    rdfs:comment "局部区域少锡的候选根因。"@zh .
+
+smt:root_cause.board_printing_condition_drift
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "整板印刷条件或锡膏状态漂移"@zh ;
+    rdfs:comment "整板同向多锡的候选根因。"@zh ;
+    smt:recommendsAction smt:action.review_board_printing_conditions .
+
+smt:root_cause.board_paste_supply_or_print_action
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "锡膏供给中断或整板印刷动作异常"@zh ;
+    rdfs:comment "整板同向少锡的候选根因。"@zh ;
+    smt:recommendsAction smt:action.review_board_printing_conditions .
+
+smt:root_cause.spi_program_false_alarm
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "SPI程序阈值或识别框异常"@zh ;
+    rdfs:comment "主指标偏差不支撑 NG 标签时的优先排除项。"@zh ;
+    smt:requiresEvidence smt:evidence.raw_spi_image ;
+    smt:recommendsAction smt:action.review_raw_spi_image .
+
+smt:root_cause.parameter_setpoint_drift
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "印刷参数实际值偏离设定"@zh ;
+    rdfs:comment "触发板印刷参数实际-计划偏差超出基线时的候选根因。"@zh ;
+    smt:requiresEvidence smt:evidence.parameter_drift .
+
+smt:root_cause.printing_program_mismatch
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "印刷程序设定不适配"@zh ;
+    rdfs:comment "参数调整后异常随即恢复时的候选根因。"@zh ;
+    smt:requiresEvidence smt:evidence.recovery .
+
+smt:root_cause.maintenance_cycle_mismatch
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "钢网清洗或锡膏维护周期不匹配"@zh ;
+    rdfs:comment "NG 连段按固定节拍复发时的候选根因。"@zh .
+
+smt:root_cause.cumulative_state_degradation
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "随生产累积的钢网或锡膏状态劣化"@zh ;
+    rdfs:comment "触发前指标持续爬升（渐变失效）时的候选根因。"@zh .
+
+smt:root_cause.discrete_process_change
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "触发时点的离散制程变化"@zh ;
+    rdfs:comment "无事前爬升、指标突跳（突变失效）时的候选根因。"@zh .
+
+smt:root_cause.local_printing_state
+    rdf:type smt:RootCauseCandidate ;
+    rdfs:label "局部印刷状态异常"@zh ;
+    rdfs:comment "证据不足以锁定单一物理原因时的兜底判断。"@zh .
+
+smt:evidence.full_spi_window
+    rdf:type smt:EvidenceType ;
+    rdfs:label "前后500条全量SPI窗口"@zh ;
+    rdfs:comment "围绕触发事件抽取的上下文窗口，用于范围、趋势、复判和排除检查。"@zh .
+
+smt:evidence.same_pad_consecutive_ng
+    rdf:type smt:EvidenceType ;
+    rdfs:label "同Pad连续NG证据"@zh ;
+    rdfs:comment "同产品、同元件、同 Pad 连续生产板同方向 NG。"@zh .
+
+smt:evidence.component_multi_pad_ng
+    rdf:type smt:EvidenceType ;
+    rdfs:label "同元件多Pad证据"@zh ;
+    rdfs:comment "同一元件多个 Pad 在同一窗口内同步异常。"@zh .
+
+smt:evidence.board_same_direction_trend
+    rdf:type smt:EvidenceType ;
+    rdfs:label "整板同向趋势证据"@zh ;
+    rdfs:comment "整板多个位置呈现同方向异常或异常比例升高。"@zh .
+
+smt:evidence.parameter_drift
+    rdf:type smt:EvidenceType ;
+    rdfs:label "参数偏离证据"@zh ;
+    rdfs:comment "印刷参数实际值相对计划值或历史基线出现偏离。"@zh .
+
+smt:evidence.recovery
+    rdf:type smt:EvidenceType ;
+    rdfs:label "恢复性证据"@zh ;
+    rdfs:comment "触发后是否恢复，以及恢复是否与处置或参数变化对齐。"@zh .
+
+smt:evidence.data_continuity
+    rdf:type smt:EvidenceType ;
+    rdfs:label "数据连续性证据"@zh ;
+    rdfs:comment "检查生产板序、时间窗口和复测记录是否支撑当前判断。"@zh .
+
+smt:evidence.raw_spi_image
+    rdf:type smt:EvidenceType ;
+    rdfs:label "原始SPI图像"@zh ;
+    rdfs:comment "用于确认测量框、Gerber 对位、阈值和实物异常真实性。"@zh .
+
+smt:action.inspect_single_stencil_aperture
+    rdf:type smt:ActionType ;
+    rdfs:label "检查单个钢网孔"@zh ;
+    rdfs:comment "检查触发 Pad 对应钢网孔底部残锡、孔壁、开口尺寸和清洁状态。"@zh .
+
+smt:action.clean_blocked_aperture
+    rdf:type smt:ActionType ;
+    rdfs:label "清洁堵塞钢网孔"@zh ;
+    rdfs:comment "显微检查并清洁对应钢网孔，确认通透性和脱模条件。"@zh .
+
+smt:action.inspect_component_area
+    rdf:type smt:ActionType ;
+    rdfs:label "检查元件区域印刷条件"@zh ;
+    rdfs:comment "检查元件区域钢网底部污染、局部贴合、PCB 支撑和平整度。"@zh .
+
+smt:action.review_board_printing_conditions
+    rdf:type smt:ActionType ;
+    rdfs:label "复核整板印刷条件"@zh ;
+    rdfs:comment "复核锡膏状态、刮刀参数、钢网底面和整板印刷动作。"@zh .
+
+smt:action.review_raw_spi_image
+    rdf:type smt:ActionType ;
+    rdfs:label "复核原始SPI图像"@zh ;
+    rdfs:comment "复核测量框、Gerber 对位、上下限和主指标偏差。"@zh .
+
+smt:disposition.immediate_field_check
+    rdf:type smt:Disposition ;
+    rdfs:label "立即现场排查并跟踪复判"@zh ;
+    rdfs:comment "异常范围扩大或风险较高时的处置口径。"@zh ;
+    smt:priority "P1"@zh .
+
+smt:disposition.fast_single_point_check
+    rdf:type smt:Disposition ;
+    rdfs:label "按单点异常做快速确认"@zh ;
+    rdfs:comment "低扩散风险时的处置口径。"@zh ;
+    smt:priority "P3"@zh .

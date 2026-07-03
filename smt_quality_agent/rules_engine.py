@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from smt_quality_agent.knowledge_base import abnormal_cause_candidates
+
 
 @dataclass(frozen=True)
 class Defect:
@@ -40,6 +42,7 @@ class Abnormal:
     board_abnormal_ratio: float = 0.0
     root_cause_guess: list[str] = field(default_factory=list)
     suggested_action: list[str] = field(default_factory=list)
+    cause_candidates: list[dict[str, Any]] = field(default_factory=list)
     status: str = "待处理"
     create_quality_case: bool = False
 
@@ -68,53 +71,10 @@ class Abnormal:
             "board_abnormal_ratio": round(self.board_abnormal_ratio, 4),
             "root_cause_guess": self.root_cause_guess,
             "suggested_action": self.suggested_action,
+            "cause_candidates": self.cause_candidates,
             "status": self.status,
             "create_quality_case": self.create_quality_case,
         }
-
-
-RULE_MATRIX: dict[tuple[str, str, str], list[tuple[str, str]]] = {
-    ("少锡", "同点多板异常", "高"): [
-        ("钢网堵孔", "立即清洗钢网，并检查对应 Pad 开口是否堵塞"),
-        ("锡膏变干", "检查锡膏回温、搅拌、使用时间和黏度状态"),
-        ("局部支撑不良", "检查该区域 PCB 支撑和平整度"),
-    ],
-    ("少锡", "同一元件多Pad异常", "中"): [
-        ("PCB支撑不良", "检查元件区域支撑和板面平整度"),
-        ("钢网局部堵塞", "检查该元件对应钢网区域是否堵孔或污染"),
-        ("印刷接触不良", "检查钢网与 PCB 贴合状态"),
-    ],
-    ("少锡", "整板趋势异常", "中"): [
-        ("刮刀压力过大", "检查并适当降低刮刀压力"),
-        ("印刷速度过快", "检查并适当降低印刷速度"),
-        ("锡膏状态异常", "检查锡膏回温、搅拌、使用时间和环境条件"),
-        ("钢网清洗不足", "检查钢网清洗频率，必要时立即清洗"),
-    ],
-    ("少锡", "整板趋势异常", "高"): [
-        ("刮刀压力过大", "立即检查并调整刮刀压力"),
-        ("锡膏状态异常", "检查锡膏回温、搅拌、使用时间和环境条件"),
-    ],
-    ("多锡", "同点多板异常", "高"): [
-        ("钢网底部残锡", "清洗钢网底部，并复测下一块板"),
-        ("钢网开口异常", "检查对应 Pad 钢网开口尺寸和状态"),
-        ("脱模异常", "检查脱模速度、脱模距离和 PCB 支撑"),
-    ],
-    ("多锡", "同一元件多Pad异常", "中"): [
-        ("钢网底部污染", "清洗该元件区域钢网底部"),
-        ("局部塌边", "检查锡膏状态、脱模条件和支撑状态"),
-        ("脱模异常", "检查脱模参数和 PCB 支撑"),
-    ],
-    ("多锡", "整板趋势异常", "中"): [
-        ("刮刀压力不足", "检查并适当提高刮刀压力"),
-        ("印刷速度过慢", "检查并优化印刷速度"),
-        ("锡膏黏度异常", "检查锡膏黏度、回温和使用时间"),
-        ("SPI程序阈值问题", "检查 SPI 程序阈值和标准值设置"),
-    ],
-    ("多锡", "整板趋势异常", "高"): [
-        ("SPI程序阈值问题", "检查 SPI 程序阈值和标准值设置"),
-        ("刮刀压力不足", "立即检查并调整刮刀压力"),
-    ],
-}
 
 
 def run_agent(
@@ -132,12 +92,13 @@ def run_agent(
             total_pad_count_by_board,
             enable_board_trend,
         )
-        causes_and_actions = recommend_causes(abnormal.defect_type, pattern, risk_level)
+        causes = recommend_causes(abnormal.defect_type, pattern, risk_level)
 
         abnormal.abnormal_pattern = pattern
         abnormal.risk_level = risk_level
-        abnormal.root_cause_guess = [item[0] for item in causes_and_actions]
-        abnormal.suggested_action = [item[1] for item in causes_and_actions]
+        abnormal.cause_candidates = causes
+        abnormal.root_cause_guess = [item["cause"] for item in causes]
+        abnormal.suggested_action = [item["action"] for item in causes]
         abnormal.create_quality_case = risk_level in {"中", "高"}
 
     return [item.to_dict() for item in abnormals]
@@ -161,6 +122,7 @@ def build_quality_cases(abnormal_results: list[dict[str, Any]]) -> list[dict[str
         latest = items[-1]
         causes = latest["root_cause_guess"]
         actions = latest["suggested_action"]
+        cause_candidates = latest.get("cause_candidates", [])
 
         quality_cases.append({
             "case_id": f"CASE{case_no:012d}",
@@ -178,6 +140,7 @@ def build_quality_cases(abnormal_results: list[dict[str, Any]]) -> list[dict[str
             "evidence_summary": build_evidence_summary(items),
             "root_cause_guess": causes,
             "suggested_action": actions,
+            "cause_candidates": cause_candidates,
             "actual_cause": None,
             "actual_action": None,
             "owner": None,
@@ -188,6 +151,7 @@ def build_quality_cases(abnormal_results: list[dict[str, Any]]) -> list[dict[str
             "first_inspect_time": first["inspect_time"],
             "latest_inspect_time": latest["inspect_time"],
             "abnormal_count": len(items),
+            "source_scope": "首次检测全量SPI异常",
         })
 
     return quality_cases
@@ -327,7 +291,7 @@ def classify_pattern(
     affected_pad_count = count_same_component_pads(current, all_abnormals)
     current.affected_pad_count = affected_pad_count
     if affected_pad_count >= 2:
-        return "同一元件多Pad异常", "中"
+        return "同元件多Pad异常", "中"
 
     return "单点偶发异常", "低"
 
@@ -375,16 +339,8 @@ def get_board_abnormal_ratio(
     return board_abnormal_count / total_pad_count
 
 
-def recommend_causes(defect_type: str, pattern: str, risk_level: str) -> list[tuple[str, str]]:
-    rules = RULE_MATRIX.get((defect_type, pattern, risk_level))
-    if rules:
-        return rules
-
-    rules = RULE_MATRIX.get((defect_type, pattern, "中"))
-    if rules:
-        return rules
-
-    return [("继续观察", "复测下一块板，确认是否重复发生")]
+def recommend_causes(defect_type: str, pattern: str, risk_level: str) -> list[dict[str, Any]]:
+    return abnormal_cause_candidates(defect_type, pattern, risk_level)
 
 
 def quality_case_group_key(item: dict[str, Any]) -> tuple[str, ...]:
@@ -397,7 +353,7 @@ def quality_case_group_key(item: dict[str, Any]) -> tuple[str, ...]:
 
     if item["abnormal_pattern"] == "同点多板异常":
         return base + (item["component"], item["pad"])
-    if item["abnormal_pattern"] == "同一元件多Pad异常":
+    if item["abnormal_pattern"] == "同元件多Pad异常":
         return base + (item["board_sn"], item["component"])
     if item["abnormal_pattern"] == "整板趋势异常":
         return base + (item["board_sn"],)
@@ -422,7 +378,7 @@ def build_evidence_summary(items: list[dict[str, Any]]) -> str:
             f"主指标为 {latest['main_metric']}。"
         )
 
-    if pattern == "同一元件多Pad异常":
+    if pattern == "同元件多Pad异常":
         pads = "、".join(item["pad"] for item in items)
         return (
             f"{latest['board_sn']} 的 {latest['component']} 多个 Pad 同时出现"

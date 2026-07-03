@@ -1,0 +1,19 @@
+{
+  "type": "postgresql",
+  "host": "",
+  "port": 5432,
+  "database": "l780db",
+  "user": "",
+  "password": "",
+  "tables": {
+    "full_spi": "full_excel0623",
+    "ng_events": "over_volume"
+  },
+  "fields": {
+    "time": "fdate",
+    "board": "barcode",
+    "component_pad": "compname",
+    "defect": "comp_errname"
+  },
+  "refresh_interval_seconds": 30
+}

@@ -34,7 +34,8 @@ PARAM_SINGLES = (
 )
 
 
-def normalize_over_volume_row(row: dict[str, Any]) -> dict[str, Any]:
+def normalize_spi_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Map one full SPI export row into the rules-engine input contract."""
     component, pad = split_component_pad(row.get("compname"))
 
     normalized = {
@@ -65,5 +66,12 @@ def normalize_over_volume_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def normalize_over_volume_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [normalize_over_volume_row(row) for row in rows]
+def normalize_spi_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [normalize_spi_row(row) for row in rows]
+
+
+# Backward-compatible names for existing callers and tests. The normalizer was
+# originally introduced for an Over Volume-only MVP, but it supports all SPI
+# defect names carried by the full export.
+normalize_over_volume_row = normalize_spi_row
+normalize_over_volume_rows = normalize_spi_rows

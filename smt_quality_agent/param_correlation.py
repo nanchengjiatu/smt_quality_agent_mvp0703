@@ -3,6 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from smt_quality_agent.knowledge_base import (
+    EVENT_SCOPE_BOARD,
+    EVENT_SCOPE_LOCAL,
+    event_cause_candidates,
+)
+
 
 # Boards whose NG records are closer than this gap belong to the same event.
 EVENT_GAP_MINUTES = 30
@@ -17,6 +23,11 @@ PRECURSOR_RISE_THRESHOLD = 3
 
 # An event board with at least this share of NG pads is a board-wide failure.
 BOARD_WIDE_NG_SHARE = 0.5
+
+# A board-wide claim additionally needs enough recorded points on that board:
+# a board with only a handful of rows reaches a 50% NG share trivially, which
+# would misread a single bad pad as a board-wide failure.
+BOARD_WIDE_MIN_BOARD_ROWS = 10
 
 METRIC_FIELDS = ("comp_avdp", "comp_aadp", "comp_ahdp")
 
@@ -44,30 +55,20 @@ DEFECT_NAME_CN = {
     "under height": "少锡(高度不足)",
 }
 
-# Event-level cause matrix keyed by (defect direction, scope).
-EVENT_RULES: dict[tuple[str, str], list[tuple[str, str]]] = {
-    ("多锡", "局部焊盘"): [
-        ("锡膏状态变化", "确认事件时段是否刚添加/搅拌锡膏，检查黏度与回温记录"),
-        ("钢网底部残锡", "清洗钢网底部，复测下一块板确认是否消失"),
-        ("SPI程序阈值偏紧", "核对涉及焊盘的 SPI 阈值与标准值设置"),
-    ],
-    ("多锡", "整板大面积"): [
-        ("锡膏黏度异常", "检查锡膏黏度、回温和使用时间"),
-        ("刮刀压力不足", "检查刮刀压力设定与实际"),
-        ("SPI程序阈值问题", "检查 SPI 程序阈值和标准值设置"),
-    ],
-    ("少锡", "局部焊盘"): [
-        ("钢网局部堵孔", "清洗钢网并检查对应 Pad 开口"),
-        ("锡膏变干", "检查锡膏回温、搅拌、使用时间"),
-        ("局部支撑不良", "检查该区域 PCB 支撑和平整度"),
-    ],
-    ("少锡", "整板大面积"): [
-        ("印刷漏刷或锡膏供给中断", "确认该板是否漏印、钢网上锡膏余量是否充足"),
-        ("钢网大面积堵塞", "立即清洗钢网并检查贴合状态"),
-        ("单次印刷动作异常", "调取印刷机该周期日志，确认刮刀行程是否完整"),
-    ],
+DEFECT_ALIASES = {
+    "areaover": "over area",
+    "volumeover": "over volume",
+    "heightover": "over height",
+    "areaunder": "under area",
+    "volumeunder": "under volume",
+    "heightunder": "under height",
 }
 
+
+def normalize_defect_key(value: str) -> str:
+    key = " ".join(str(value or "").strip().lower().replace("_", " ").replace("-", " ").split())
+    compact = key.replace(" ", "")
+    return DEFECT_ALIASES.get(compact, key)
 
 def parse_fdate(value: Any) -> datetime | None:
     text = str(value or "").strip()
@@ -95,6 +96,16 @@ def is_ng(row: dict[str, Any]) -> bool:
     return bool(err) and err.upper() != "PASS"
 
 
+def defect_direction(value: str) -> str:
+    """Collapse machine defect names into root-cause-compatible directions."""
+    key = normalize_defect_key(value)
+    if key.startswith("over"):
+        return "多锡"
+    if key.startswith("under"):
+        return "少锡"
+    return f"其他:{key or '未知'}"
+
+
 def aggregate_boards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group rows into inspections keyed by (board, inspect time).
 
@@ -110,9 +121,17 @@ def aggregate_boards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for (board_sn, time_text), board_rows in grouped.items():
         ng_rows = [row for row in board_rows if is_ng(row)]
         ng_types: dict[str, int] = {}
+        ng_types_by_direction: dict[str, dict[str, int]] = {}
+        ng_components_by_direction: dict[str, set[str]] = {}
         for row in ng_rows:
             err = str(row.get("comp_errname") or "").strip()
             ng_types[err] = ng_types.get(err, 0) + 1
+            direction = defect_direction(err)
+            direction_types = ng_types_by_direction.setdefault(direction, {})
+            direction_types[err] = direction_types.get(err, 0) + 1
+            ng_components_by_direction.setdefault(direction, set()).add(
+                str(row.get("compname") or "")
+            )
 
         boards.append({
             "board_sn": board_sn,
@@ -126,6 +145,15 @@ def aggregate_boards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "ng_share": len(ng_rows) / len(board_rows) if board_rows else 0.0,
             "ng_types": ng_types,
             "ng_components": sorted({str(row.get("compname") or "") for row in ng_rows}),
+            "ng_types_by_direction": ng_types_by_direction,
+            "ng_count_by_direction": {
+                direction: sum(types.values())
+                for direction, types in ng_types_by_direction.items()
+            },
+            "ng_components_by_direction": {
+                direction: sorted(components)
+                for direction, components in ng_components_by_direction.items()
+            },
             "metric_avgs": {field: avg_metric(board_rows, field) for field in METRIC_FIELDS},
             "pass_metric_avgs": {
                 field: avg_metric([row for row in board_rows if not is_ng(row)], field)
@@ -143,6 +171,19 @@ def aggregate_boards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return boards
 
 
+def first_inspection_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return rows from each board's first inspection, excluding rechecks."""
+    first_keys = {
+        (board["board_sn"], board["time_text"])
+        for board in aggregate_boards(rows)
+        if not board["is_recheck"]
+    }
+    return [
+        row for row in rows
+        if (str(row.get("barcode") or ""), str(row.get("fdate") or "")) in first_keys
+    ]
+
+
 def avg_metric(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [value for value in (as_float(row.get(field)) for row in rows) if value is not None]
     if not values:
@@ -154,16 +195,30 @@ def detect_events(
     boards: list[dict[str, Any]],
     gap_minutes: int = EVENT_GAP_MINUTES,
 ) -> list[list[dict[str, Any]]]:
-    """Cluster NG boards of the same model that are close in time."""
-    ng_boards = [board for board in boards if board["ng_count"] > 0 and board["time"]]
-    by_model: dict[str, list[dict[str, Any]]] = {}
+    """Cluster first-inspection NGs by model, machine, and defect direction."""
+    ng_boards = [
+        board for board in boards
+        if board["ng_count"] > 0 and board["time"] and not board["is_recheck"]
+    ]
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for board in ng_boards:
-        by_model.setdefault(board["model"], []).append(board)
+        for direction, types in board["ng_types_by_direction"].items():
+            direction_count = sum(types.values())
+            projected = {
+                **board,
+                "event_direction": direction,
+                "ng_count": direction_count,
+                "ng_share": direction_count / board["row_count"] if board["row_count"] else 0.0,
+                "ng_types": types,
+                "ng_components": board["ng_components_by_direction"].get(direction, []),
+            }
+            key = (board["model"], board["machine"], direction)
+            grouped.setdefault(key, []).append(projected)
 
     clusters: list[list[dict[str, Any]]] = []
-    for model_boards in by_model.values():
+    for group_boards in grouped.values():
         current: list[dict[str, Any]] = []
-        for board in model_boards:
+        for board in group_boards:
             if current and (board["time"] - current[-1]["time"]).total_seconds() > gap_minutes * 60:
                 clusters.append(current)
                 current = []
@@ -349,14 +404,19 @@ def build_event(
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     main_defect = main_defect_type(cluster)
-    main_defect_key = main_defect.lower()
+    main_defect_key = normalize_defect_key(main_defect)
     metric_field = DEFECT_MAIN_METRIC.get(main_defect_key, "comp_avdp")
     metric_label = METRIC_LABELS[metric_field]
     defect_cn = DEFECT_NAME_CN.get(main_defect_key, main_defect)
-    direction = "多锡" if main_defect_key.startswith("over") else "少锡"
+    direction = cluster[0]["event_direction"]
 
     max_ng_share = max(board["ng_share"] for board in cluster)
-    scope = "整板大面积" if max_ng_share >= BOARD_WIDE_NG_SHARE else "局部焊盘"
+    board_wide = any(
+        board["ng_share"] >= BOARD_WIDE_NG_SHARE
+        and board["row_count"] >= BOARD_WIDE_MIN_BOARD_ROWS
+        for board in cluster
+    )
+    scope = EVENT_SCOPE_BOARD if board_wide else EVENT_SCOPE_LOCAL
 
     event_board_sns = {board["board_sn"] for board in cluster}
     precursor = analyze_precursor(cluster, boards, metric_field)
@@ -377,12 +437,13 @@ def build_event(
         cluster, boards, metric_field, metric_label, defect_cn,
         scope, duration_minutes, precursor, parameter_check, recheck,
     )
-    causes = EVENT_RULES.get((direction, scope), [])
+    cause_candidates = event_cause_candidates(direction, scope)
 
     return {
         "event_id": f"EVT{event_no:03d}",
         "model": cluster[0]["model"],
         "machine": cluster[0]["machine"],
+        "defect_direction": direction,
         "start_time": cluster[0]["time_text"],
         "end_time": cluster[-1]["time_text"],
         "duration_minutes": duration_minutes,
@@ -410,8 +471,9 @@ def build_event(
         "parameter_check": parameter_check,
         "recheck": recheck,
         "findings": findings,
-        "suggested_causes": [item[0] for item in causes],
-        "suggested_actions": [item[1] for item in causes],
+        "cause_candidates": cause_candidates,
+        "suggested_causes": [item["cause"] for item in cause_candidates],
+        "suggested_actions": [item["action"] for item in cause_candidates],
     }
 
 
@@ -433,11 +495,15 @@ def analyze_recheck(
         if not rechecks:
             continue
         latest = rechecks[-1]
+        direction = event_board.get("event_direction")
+        recheck_ng_count = latest.get("ng_count_by_direction", {}).get(
+            direction, latest["ng_count"]
+        )
         outcomes.append({
             "board_sn": event_board["board_sn"],
             "recheck_time": latest["time_text"],
-            "recheck_ng_count": latest["ng_count"],
-            "passed": latest["ng_count"] == 0,
+            "recheck_ng_count": recheck_ng_count,
+            "passed": recheck_ng_count == 0,
         })
 
     return {
@@ -466,8 +532,12 @@ def build_findings(
         "而非随机散发。"
     ]
 
-    if scope == "整板大面积":
-        worst = max(cluster, key=lambda board: board["ng_share"])
+    if scope == EVENT_SCOPE_BOARD:
+        qualified = [
+            board for board in cluster
+            if board["row_count"] >= BOARD_WIDE_MIN_BOARD_ROWS
+        ]
+        worst = max(qualified or cluster, key=lambda board: board["ng_share"])
         findings.append(
             f"板 {worst['board_sn']} 上 {worst['ng_count']}/{worst['row_count']} 个检测点同时异常"
             f"（占比 {worst['ng_share'] * 100:.0f}%），为整板性失效而非个别焊盘问题。"
@@ -517,22 +587,29 @@ def round_or_none(value: float | None) -> float | None:
 
 
 def build_data_overview(rows: list[dict[str, Any]], boards: list[dict[str, Any]]) -> dict[str, Any]:
-    ng_count = sum(1 for row in rows if is_ng(row))
     first_inspections = [board for board in boards if not board["is_recheck"]]
     rechecks = [board for board in boards if board["is_recheck"]]
+    production_record_count = sum(board["row_count"] for board in first_inspections)
+    ng_count = sum(board["ng_count"] for board in first_inspections)
+    inspection_ng_count = sum(board["ng_count"] for board in boards)
+    recheck_ng_count = sum(board["ng_count"] for board in rechecks)
     ng_board_count = sum(1 for board in first_inspections if board["ng_count"] > 0)
     recheck_pass_count = sum(1 for board in rechecks if board["ng_count"] == 0)
     timed_boards = [board for board in boards if board["time"]]
 
     return {
         "record_count": len(rows),
+        "production_record_count": production_record_count,
         "board_count": len(first_inspections),
         "inspection_count": len(boards),
         "model_count": len({board["model"] for board in boards}),
         "machine_count": len({board["machine"] for board in boards}),
-        "pass_count": len(rows) - ng_count,
+        "pass_count": production_record_count - ng_count,
         "ng_count": ng_count,
-        "defect_rate_percent": round(ng_count / len(rows) * 100, 2) if rows else None,
+        "inspection_ng_count": inspection_ng_count,
+        "recheck_ng_count": recheck_ng_count,
+        "defect_rate_percent": round(ng_count / production_record_count * 100, 2)
+        if production_record_count else None,
         "ng_board_count": ng_board_count,
         "board_pass_rate_percent": round(
             (1 - ng_board_count / len(first_inspections)) * 100, 2
@@ -547,7 +624,10 @@ def build_data_overview(rows: list[dict[str, Any]], boards: list[dict[str, Any]]
     }
 
 
-def build_param_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_param_analysis(
+    rows: list[dict[str, Any]],
+    source_table: str = "l780db.public.full_excel0623",
+) -> dict[str, Any]:
     boards = aggregate_boards(rows)
     clusters = detect_events(boards)
     events = [
@@ -557,7 +637,7 @@ def build_param_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "source_table": "l780db.public.full_excel0608",
+        "source_table": source_table,
         "data_overview": build_data_overview(rows, boards),
         "events": events,
         "caveats": [

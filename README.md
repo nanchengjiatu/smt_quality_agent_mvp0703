@@ -21,25 +21,28 @@ more-solder and less-solder defects.
 - `sql/over_volume.sql`: real `l780db.public.over_volume` table definition.
 - `data/sample_spi_data.csv`: sample SPI data for rule verification.
 - `smt_quality_agent/rules_engine.py`: core rule engine.
-- `smt_quality_agent/over_volume.py`: adapter for `l780db.public.over_volume`.
+- `smt_quality_agent/over_volume.py`: compatibility-named adapter that maps the
+  full `l780db.public.full_excel0623` SPI export into the rules-engine contract.
 - `smt_quality_agent/affected_model.py`: adapter for `l780db.public.affected_model_0601`.
 - `smt_quality_agent/dashboard.py`: dashboard summary and TOP ranking logic.
 - `smt_quality_agent/param_correlation.py`: full-data event clustering,
   precursor drift detection, parameter exclusion, and recheck analysis.
-- `run_param_analysis_demo.py`: reads `l780db.public.full_excel0608` and
+- `run_param_analysis_demo.py`: reads `l780db.public.full_excel0623` and
   writes `output/param_analysis.json` for the 事件与根因分析 view.
 - `smt_quality_agent/drilldown.py`: three-consecutive-board same-pad trigger
   detection plus the deep-dive analysis package (±300-record window, step vs
   gradual classification, scope, recovery, periodicity, setpoint-change events).
 - `run_drilldown_demo.py`: writes `output/drilldown.json` for the drill-down
   workbench (web/drilldown.js).
-- `run_over_volume_demo.py`: main entry, reads `l780db.public.over_volume` with `psql`.
+- `run_over_volume_demo.py`: compatibility entry; reads full SPI data and builds
+  realtime abnormalities plus quality cases from first inspections.
 - `run_demo.py`: runs the sample CSV data through the rule engine.
 - `run_l780db_demo.py`: reads PostgreSQL `l780db.public.affected_model_0601` with `psql`.
 - `scripts/import_xlsx_to_l780db.py`: streams SPI XLSX exports into PostgreSQL.
 - `web/`: static MVP page for realtime abnormalities, quality cases, and dashboard.
 - `smt_quality_agent/pipeline.py`: orchestrates all three analysis stages
-  (over_volume / param_analysis / drilldown) and writes every `output/*.json`.
+  (anomaly_cases / param_analysis / drilldown) from one database snapshot and
+  writes every `output/*.json`.
 - `serve.py`: one-command launcher — runs the pipeline then serves `web/` +
   `output/` on a single port, with a refresh endpoint (pure stdlib).
 
@@ -64,10 +67,12 @@ re-run pipeline (per-stage status JSON) · `GET /api/status` file freshness.
 The individual `run_*_demo.py` scripts below remain available for debugging a
 single stage from the CLI; the server runs all of them via the pipeline.
 
-## Run (over_volume, primary)
+## Run (unified realtime abnormalities and quality cases)
 
-The primary data source is the PostgreSQL table `l780db.public.over_volume`,
-which uses the real SPI export structure (printing parameters as
+The active data source is PostgreSQL table `l780db.public.full_excel0623`.
+All views consume the same PASS+NG snapshot. Realtime abnormalities and quality
+cases use first inspections only (rechecks are excluded), while the event view
+retains rechecks only for recheck-effectiveness analysis. It uses the real SPI export structure (printing parameters as
 `<name>_plan` / `<name>` / `diff_<name>` columns plus `Comp_*` defect fields).
 
 ```bash
@@ -97,12 +102,12 @@ Field mapping (same convention as `affected_model_0601`):
   `cleaningfrequency`, ...) plus `temperature` / `humidity` are carried along
   for later cause correlation.
 
-Note: `over_volume` contains abnormal rows only, so board-level trend rules
-stay disabled on this path.
+Because the anomaly rules receive complete first-inspection board populations,
+board-level trend rules and their denominators are enabled on this path.
 
 ## Run (full-data event & root-cause analysis)
 
-`l780db.public.full_excel0608` holds the complete SPI export (PASS rows
+`l780db.public.full_excel0623` holds the complete SPI export (PASS rows
 included), which enables analyses the NG-only tables cannot support:
 
 ```bash
@@ -112,8 +117,11 @@ python3 run_param_analysis_demo.py
 This writes `output/param_analysis.json`, rendered by the 事件与根因分析 tab:
 
 - data overview: defect rate, board first-pass rate, recheck effective rate;
-- event clustering: NG boards of the same model within 30 minutes form one
-  event, with board-wide vs local-pad scope classification;
+- primary NG counts and defect rate use first inspections; recheck NG is
+  reported separately and does not create or extend an event;
+- event clustering: first-inspection NGs with the same model, machine, and
+  defect direction (多锡/少锡) form one event while adjacent gaps stay within
+  30 minutes, with board-wide vs local-pad scope classification;
 - precursor drift: deviation trend of normal boards before each event
   (sudden vs gradual verdict);
 - parameter exclusion: per-event check whether any `abs_<param>` deviation

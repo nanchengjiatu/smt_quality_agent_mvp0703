@@ -8,13 +8,187 @@ const drilldownState = {
   overlayParam: "",
   highlight: null,
   compareTab: "siblings",
+  chatMessages: [],
+  chatLoading: false,
 };
+
+const DD_CHAT_API = "/api/drilldown/chat";
 
 const DD_METRICS = [
   ["comp_avdp", "体积偏差"],
   ["comp_aadp", "面积偏差"],
   ["comp_ahdp", "高度偏差"],
 ];
+
+function renderCountList(items) {
+  if (!items || !items.length) {
+    return `<span class="details">无</span>`;
+  }
+  return items.map((item) => `
+    <span class="dd-mini-pill">${escapeHtml(item.name)} <strong>${escapeHtml(item.count)}</strong></span>
+  `).join("");
+}
+
+function renderAgentOverview(trigger) {
+  const contract = trigger.analysis_contract || {};
+  const contractScope = contract.scope || {};
+  const contractDisposition = contract.disposition || {};
+  const contractTrigger = contract.trigger || {};
+  const summary = (contract.evidence || {}).context || {};
+  const fullWindow = trigger.full_spi_window || {};
+  return `
+    <section class="panel dd-agent-overview">
+      <div class="dd-agent-head">
+        <div>
+          <h3>Agent 判定</h3>
+          <div class="dd-agent-title">
+            ${escapeHtml(contractScope.category || "待判定")}
+            <span class="badge risk-${escapeHtml(contractScope.confidence || "中")}">置信度 ${escapeHtml(contractScope.confidence || "中")}</span>
+          </div>
+        </div>
+        <div class="dd-agent-source">
+          全量 SPI 窗口 前 ${escapeHtml(fullWindow.actual_before ?? 0)}/${escapeHtml(fullWindow.requested_before ?? 500)}
+          · 后 ${escapeHtml(fullWindow.actual_after ?? 0)}/${escapeHtml(fullWindow.requested_after ?? 500)}
+        </div>
+      </div>
+      <div class="dd-agent-grid">
+        <div>
+          <span class="details">窗口总行数</span>
+          <strong>${escapeHtml(summary.total_rows ?? 0)}</strong>
+        </div>
+        <div>
+          <span class="details">窗口 NG</span>
+          <strong>${escapeHtml(summary.ng_rows ?? 0)} / ${formatNumber(((summary.ng_rate || 0) * 100))}%</strong>
+        </div>
+        <div>
+          <span class="details">同元件 NG</span>
+          <strong>${escapeHtml(summary.same_component_ng_rows ?? 0)}</strong>
+        </div>
+        <div>
+          <span class="details">同 Pad NG</span>
+          <strong>${escapeHtml(summary.same_pad_ng_rows ?? 0)}</strong>
+        </div>
+      </div>
+      <p class="dd-agent-detail">${escapeHtml(contractTrigger.conclusion || "")}</p>
+      <div class="dd-disposition">
+        <div>
+          <span class="details">处置等级</span>
+          <strong>${escapeHtml(contractDisposition.priority || "P3")}</strong>
+        </div>
+        <div>
+          <span class="details">处置建议</span>
+          <strong>${escapeHtml(contractDisposition.suggestion || "按单点异常做快速确认")}</strong>
+        </div>
+        <div>
+          <span class="details">首要依据</span>
+          <strong>${escapeHtml(contractDisposition.primary_evidence || "待现场确认")}</strong>
+        </div>
+        <div>
+          <span class="details">第一步动作</span>
+          <strong>${escapeHtml(contractDisposition.primary_action || "复核触发 Pad、原始 SPI 图像和事件时段设备记录。")}</strong>
+        </div>
+      </div>
+      <div class="dd-evidence-tags">
+        ${(((contract.evidence || {}).tags) || []).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderAgentEvidence(trigger) {
+  const contract = trigger.analysis_contract || {};
+  const contractEvidence = contract.evidence || {};
+  const summary = contractEvidence.context || {};
+  const exclusionItems = contractEvidence.exclusion_checks || [];
+  return `
+    <section class="dd-agent-evidence">
+      <h3>Agent 输出</h3>
+      <div class="dd-evidence-block">
+        <span class="details">异常结论</span>
+        <strong>${escapeHtml((contract.trigger || {}).conclusion || "待判定")}</strong>
+      </div>
+      <h3>全量 SPI 证据摘要</h3>
+      <div class="dd-evidence-block">
+        <span class="details">主要异常类型</span>
+        <div>${renderCountList(summary.dominant_defects)}</div>
+      </div>
+      <div class="dd-evidence-block">
+        <span class="details">Top NG 元件</span>
+        <div>${renderCountList(summary.top_ng_components)}</div>
+      </div>
+      <div class="dd-evidence-block">
+        <span class="details">Top NG Pad</span>
+        <div>${renderCountList(summary.top_ng_pads)}</div>
+      </div>
+      <h3>排除检查</h3>
+      ${exclusionItems.map((item) => `
+        <div class="dd-check-row ${item.status === "pass" ? "pass" : "review"}">
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>${escapeHtml(item.detail || "未检查")}</span>
+        </div>
+      `).join("")}
+      <h3>复判标准</h3>
+      <ul class="finding-list">
+        ${(((contract.recheck || {}).criteria) || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderChatMessages() {
+  const messages = drilldownState.chatMessages || [];
+  if (!messages.length) {
+    return `<div class="dd-chat-empty">选择一个问题，Agent 会基于当前下钻事件回答。</div>`;
+  }
+  return messages.map((message) => {
+    if (message.role === "user") {
+      return `<div class="dd-chat-bubble user">${escapeHtml(message.text)}</div>`;
+    }
+    if (message.error) {
+      return `<div class="dd-chat-bubble assistant error">${escapeHtml(message.error)}</div>`;
+    }
+    const answer = message.answer || {};
+    return `
+      <div class="dd-chat-bubble assistant">
+        <strong>结论</strong>
+        <p>${escapeHtml(answer.conclusion || "暂无结论")}</p>
+        <strong>证据</strong>
+        <p>${escapeHtml(answer.evidence || "暂无证据")}</p>
+        <strong>下一步</strong>
+        <p>${escapeHtml(answer.next_step || "暂无建议")}</p>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderChatPanel(trigger) {
+  const quickQuestions = [
+    "为什么判定为这个范围？",
+    "现场先查什么？",
+    "哪些证据支持首要根因？",
+    "这是不是 SPI 假异常？",
+    "解释参数对比结果",
+  ];
+  return `
+    <h3>对话分析</h3>
+    <div class="dd-chat-note">
+      当前为<strong>离线规则问答</strong>，只基于本次触发事件的 Agent 输出、证据摘要和排除检查回答。
+    </div>
+    <div class="dd-chat-quick">
+      ${quickQuestions.map((question) => `
+        <button class="dd-chip" data-chat-question="${escapeHtml(question)}" ${drilldownState.chatLoading ? "disabled" : ""}>${escapeHtml(question)}</button>
+      `).join("")}
+    </div>
+    <div id="ddChatMessages" class="dd-chat-messages">
+      ${renderChatMessages()}
+      ${drilldownState.chatLoading ? `<div class="dd-chat-bubble assistant">正在分析当前事件...</div>` : ""}
+    </div>
+    <div class="dd-chat-input">
+      <input id="ddChatInput" type="text" placeholder="围绕当前事件追问…" ${drilldownState.chatLoading ? "disabled" : ""}>
+      <button id="ddChatSend" ${drilldownState.chatLoading ? "disabled" : ""}>发送</button>
+    </div>
+  `;
+}
 
 function findDrilldownTrigger(triggers, component, pad) {
   return (triggers || []).find(
@@ -29,6 +203,8 @@ function openDrilldown(trigger) {
   drilldownState.overlayParam = "";
   drilldownState.highlight = null;
   drilldownState.compareTab = "siblings";
+  drilldownState.chatMessages = [];
+  drilldownState.chatLoading = false;
 
   let overlay = document.getElementById("ddOverlay");
   if (!overlay) {
@@ -66,6 +242,7 @@ function renderDrilldown() {
   const maxValue = Math.max(...trigger.series
     .map((point) => point.values[trigger.metric_field])
     .filter((value) => value != null));
+  const rootCauseCandidates = ((trigger.analysis_contract || {}).root_cause_candidates) || [];
 
   overlay.innerHTML = `
     <header class="dd-header">
@@ -74,7 +251,7 @@ function renderDrilldown() {
         <div class="dd-title">
           焊盘 ${escapeHtml(trigger.pad_name)} · 机种 ${escapeHtml(trigger.model)}
           <span class="${trigger.direction === "多锡" ? "defect-多锡" : "defect-少锡"}">${escapeHtml(trigger.main_defect_cn)}</span>
-          <span class="badge risk-高">${escapeHtml(trigger.scope.rule_scope)}</span>
+          <span class="badge risk-高">${escapeHtml(((trigger.analysis_contract || {}).scope || {}).category || "待判定")}</span>
           <span class="badge dd-badge">三板连发</span>
         </div>
         <div class="dd-sub">
@@ -87,6 +264,7 @@ function renderDrilldown() {
     </header>
     <div class="dd-body">
       <div class="dd-main">
+        ${renderAgentOverview(trigger)}
         <section class="panel">
           <div class="dd-chart-toolbar">
             <div class="dd-metric-switch">
@@ -140,29 +318,25 @@ function renderDrilldown() {
               </li>
             `).join("")}
           </ul>
-          <h3>疑似原因与建议</h3>
+          <h3>根因优先级与现场建议</h3>
           <ul class="finding-list">
-            ${(trigger.suggested_causes || []).map((cause, index) => `
-              <li><strong>${escapeHtml(cause)}</strong><span class="details"> — ${escapeHtml((trigger.suggested_actions || [])[index] || "")}</span></li>
-            `).join("")}
+            ${rootCauseCandidates.length
+              ? rootCauseCandidates.map((item) => `
+                <li>
+                  <strong>${item.priority}. ${escapeHtml(item.cause)}</strong>
+                  <span class="badge risk-${escapeHtml(item.evidence_level || "中")}">证据 ${escapeHtml(item.evidence_level || "中")}</span>
+                  <span class="details">规则：${escapeHtml(item.rule_id || "rule.unspecified")}</span>
+                  <span class="details"> — 依据：${escapeHtml(item.evidence || "待现场确认")}</span><br>
+                  <span class="details">处置：${escapeHtml(item.action || "")}</span>
+                </li>
+              `).join("")
+              : `<li class="details">当前事件没有可用的根因候选。</li>`}
           </ul>
         </section>
       </div>
       <aside class="dd-chat panel">
-        <h3>💬 对话分析</h3>
-        <div class="dd-chat-note">
-          对话功能需要配置大模型（内网部署或 API 接入）后启用。<br>
-          当前为<strong>离线规则模式</strong>，左侧全部分析不依赖大模型、不受影响。
-        </div>
-        <div class="dd-chat-quick">
-          ${["为什么判定为" + trigger.change_type.verdict.slice(0, 3), "给我一份现场排查清单", "和历史同类事件对比", "解释参数对比结果"].map(
-            (question) => `<button class="dd-chip" disabled>${escapeHtml(question)}</button>`,
-          ).join("")}
-        </div>
-        <div class="dd-chat-input">
-          <input type="text" placeholder="配置大模型后可输入问题…" disabled>
-          <button disabled>发送</button>
-        </div>
+        ${renderAgentEvidence(trigger)}
+        ${renderChatPanel(trigger)}
       </aside>
     </div>
   `;
@@ -199,9 +373,55 @@ function renderDrilldown() {
       renderDrilldown();
     });
   });
+  overlay.querySelectorAll("[data-chat-question]").forEach((button) => {
+    button.addEventListener("click", () => {
+      askDrilldownQuestion(button.dataset.chatQuestion || button.textContent || "");
+    });
+  });
+  const chatInput = overlay.querySelector("#ddChatInput");
+  const chatSend = overlay.querySelector("#ddChatSend");
+  if (chatInput && chatSend) {
+    chatSend.addEventListener("click", () => askDrilldownQuestion(chatInput.value));
+    chatInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        askDrilldownQuestion(chatInput.value);
+      }
+    });
+  }
 
   renderRunChart();
   renderCompareBody();
+}
+
+async function askDrilldownQuestion(question) {
+  const text = String(question || "").trim();
+  const trigger = drilldownState.trigger;
+  if (!text || !trigger || drilldownState.chatLoading) {
+    return;
+  }
+  drilldownState.chatMessages.push({ role: "user", text });
+  drilldownState.chatLoading = true;
+  renderDrilldown();
+  try {
+    const response = await fetch(DD_CHAT_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger_id: trigger.trigger_id, question: text }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.ok === false) {
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+    drilldownState.chatMessages.push({ role: "assistant", answer: body.answer, intent: body.intent });
+  } catch (error) {
+    drilldownState.chatMessages.push({
+      role: "assistant",
+      error: `对话分析失败：${error.message}。请确认当前页面由 python3 serve.py 提供，而不是普通静态服务。`,
+    });
+  } finally {
+    drilldownState.chatLoading = false;
+    renderDrilldown();
+  }
 }
 
 function renderRunChart() {

@@ -6,7 +6,9 @@ from smt_quality_agent.param_correlation import (
     build_param_analysis,
     check_parameters,
     detect_events,
+    first_inspection_rows,
     linear_slope,
+    normalize_defect_key,
     parse_fdate,
     tail_consecutive_rise,
 )
@@ -21,10 +23,11 @@ def make_row(
     cmodel: str = "MODEL-A",
     compname: str = "C1_1",
     abs_printspeed: float = 0.0,
+    machine: str = "GKG-PC",
 ) -> dict:
     return {
         "fdate": fdate,
-        "machinename": "GKG-PC",
+        "machinename": machine,
         "cmodel": cmodel,
         "barcode": barcode,
         "compname": compname,
@@ -49,6 +52,9 @@ class ParseFdateTest(unittest.TestCase):
 
     def test_returns_none_for_empty(self) -> None:
         self.assertIsNone(parse_fdate(""))
+
+    def test_normalizes_machine_defect_alias(self) -> None:
+        self.assertEqual(normalize_defect_key("AREAOVER"), "over area")
         self.assertIsNone(parse_fdate(None))
 
 
@@ -65,6 +71,18 @@ class AggregateBoardsTest(unittest.TestCase):
         self.assertTrue(boards[1]["is_recheck"])
         self.assertEqual(boards[0]["ng_share"], 1.0)
         self.assertEqual(boards[1]["ng_count"], 0)
+
+    def test_first_inspection_rows_excludes_all_recheck_rows(self) -> None:
+        rows = [
+            make_row("B1", "2024/1/12 10:50", "Under Height", compname="C1_1"),
+            make_row("B1", "2024/1/12 10:50", "PASS", compname="C1_2"),
+            make_row("B1", "2024/1/12 10:56", "PASS", compname="C1_1"),
+        ]
+
+        selected = first_inspection_rows(rows)
+
+        self.assertEqual(len(selected), 2)
+        self.assertEqual({row["fdate"] for row in selected}, {"2024/1/12 10:50"})
 
 
 class DetectEventsTest(unittest.TestCase):
@@ -88,6 +106,38 @@ class DetectEventsTest(unittest.TestCase):
         ]
         clusters = detect_events(aggregate_boards(rows))
         self.assertEqual(len(clusters), 2)
+
+    def test_does_not_merge_events_across_machines(self) -> None:
+        rows = [
+            make_row("B1", "2024/1/9 3:12", "Over Volume", machine="SPI-A"),
+            make_row("B2", "2024/1/9 3:14", "Over Volume", machine="SPI-B"),
+        ]
+        clusters = detect_events(aggregate_boards(rows))
+        self.assertEqual(len(clusters), 2)
+
+    def test_separates_over_and_under_directions_without_losing_ng(self) -> None:
+        rows = [
+            make_row("B1", "2024/1/9 3:12", "Over Volume", compname="C1_1"),
+            make_row("B1", "2024/1/9 3:12", "Under Height", compname="C2_1"),
+            make_row("B2", "2024/1/9 3:14", "Over Volume", compname="C1_1"),
+        ]
+
+        clusters = detect_events(aggregate_boards(rows))
+
+        self.assertEqual(len(clusters), 2)
+        self.assertEqual({cluster[0]["event_direction"] for cluster in clusters}, {"多锡", "少锡"})
+        self.assertEqual(sum(board["ng_count"] for cluster in clusters for board in cluster), 3)
+
+    def test_recheck_ng_does_not_create_or_extend_event(self) -> None:
+        rows = [
+            make_row("B1", "2024/1/9 3:12", "Over Volume"),
+            make_row("B1", "2024/1/9 3:18", "Over Volume"),
+        ]
+
+        clusters = detect_events(aggregate_boards(rows))
+
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual([board["time_text"] for board in clusters[0]], ["2024/1/9 3:12"])
 
 
 class PrecursorTest(unittest.TestCase):
@@ -181,14 +231,21 @@ class BuildParamAnalysisTest(unittest.TestCase):
         self.assertEqual(overview["inspection_count"], 7)
         self.assertEqual(overview["recheck_count"], 1)
         self.assertEqual(overview["recheck_effective_rate"], 1.0)
+        self.assertEqual(overview["ng_count"], 1)
+        self.assertEqual(overview["inspection_ng_count"], 1)
+        self.assertEqual(overview["recheck_ng_count"], 0)
         self.assertEqual(len(analysis["events"]), 1)
 
         event = analysis["events"][0]
         self.assertEqual(event["main_defect_cn"], "少锡(高度不足)")
-        self.assertEqual(event["scope"], "整板大面积")
+        # 该板只有 1 条记录，NG 占比 100% 但样本太少，不允许判整板大面积。
+        self.assertEqual(event["scope"], "局部焊盘")
         self.assertEqual(event["recheck"]["passed_board_count"], 1)
         self.assertTrue(any("复测" in finding for finding in event["findings"]))
         self.assertTrue(event["suggested_causes"])
+        self.assertTrue(event["cause_candidates"])
+        self.assertTrue(all("rule_id" in item and "rule_source" in item for item in event["cause_candidates"]))
+        self.assertEqual(event["suggested_causes"], [item["cause"] for item in event["cause_candidates"]])
 
 
 if __name__ == "__main__":

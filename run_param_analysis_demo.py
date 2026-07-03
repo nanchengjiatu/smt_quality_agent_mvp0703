@@ -8,7 +8,7 @@ def main() -> None:
     analysis = build_param_analysis(load_full_excel_rows())
 
     overview = analysis["data_overview"]
-    print("=== full_excel0608 数据概览 ===")
+    print("=== full_excel0623 数据概览 ===")
     print(json.dumps(overview, ensure_ascii=False, indent=2))
     print(f"\n=== 检出 {len(analysis['events'])} 个聚集事件 ===")
     for event in analysis["events"]:
