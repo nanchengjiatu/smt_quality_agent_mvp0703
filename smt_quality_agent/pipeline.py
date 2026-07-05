@@ -55,21 +55,52 @@ def datasource_for(database: str | None = None) -> dict[str, Any]:
     return config
 
 
-def full_excel_query(config: dict[str, Any]) -> str:
+# fdate is stored as unpadded text ("2024/1/4 9:58"), so text ordering breaks
+# across months ("2024/9/…" > "2024/11/…"). SQL-side ordering must parse it;
+# the regex guard turns malformed values into NULL instead of failing the query.
+FDATE_PATTERN = r"^\d{4}[/-]\d{1,2}[/-]\d{1,2} \d{1,2}:\d{2}"
+
+
+def fdate_ts_expr(config: dict[str, Any]) -> str:
+    field = quote_identifier(config["fields"]["time"])
+    return (
+        f"case when {field} ~ '{FDATE_PATTERN}' "
+        f"then to_timestamp(substring({field} from '{FDATE_PATTERN}'), 'YYYY/MM/DD HH24:MI') end"
+    )
+
+
+def full_excel_query(config: dict[str, Any], window_boards: int = 0) -> str:
     table = qualified_table(config)
-    return f"""
+    if not window_boards:
+        return f"""
 select coalesce(json_agg(row_to_json(t)), '[]'::json)
 from (
     select *
     from {table}
 ) t;
 """
+    board_field = quote_identifier(config["fields"]["board"])
+    return f"""
+with board_times as (
+    select {board_field} as board, max({fdate_ts_expr(config)}) as ts
+    from {table}
+    group by {board_field}
+),
+recent_boards as (
+    select board from board_times order by ts desc nulls last limit {int(window_boards)}
+)
+select coalesce(json_agg(row_to_json(t)), '[]'::json)
+from (
+    select *
+    from {table}
+    where {board_field} in (select board from recent_boards)
+) t;
+"""
 
 
 def fingerprint_query(config: dict[str, Any]) -> str:
     table = qualified_table(config)
-    time_field = quote_identifier(config["fields"]["time"])
-    return f"select count(*) || '|' || coalesce(max({time_field})::text, '') from {table};"
+    return f"select count(*) || '|' || coalesce(max({fdate_ts_expr(config)})::text, '') from {table};"
 
 
 def _psql_json(query: str, database: str | None = None) -> list[dict[str, Any]]:
@@ -92,9 +123,9 @@ def over_volume_fingerprint(database: str | None = None) -> str:
     return completed.stdout.strip()
 
 
-def load_full_excel_rows(database: str | None = None) -> list[dict[str, Any]]:
+def load_full_excel_rows(database: str | None = None, window_boards: int = 0) -> list[dict[str, Any]]:
     config = datasource_for(database)
-    rows = _psql_json(full_excel_query(config), config["database"])
+    rows = _psql_json(full_excel_query(config, window_boards), config["database"])
     # Mixed-case column names (BarCode, Comp_errName, ...) are lowered so the
     # analysis modules see the same keys regardless of export casing.
     return [{key.lower(): value for key, value in row.items()} for row in rows]
@@ -177,15 +208,20 @@ def run_full_excel_stages(database: str | None = None) -> list[dict[str, Any]]:
     return [_stage("param_analysis", param_work), _stage("drilldown", drilldown_work)]
 
 
-def run_pipeline(database: str | None = None) -> dict[str, Any]:
-    """Run all views from one full-table snapshot.
+def run_pipeline(database: str | None = None, window_boards: int | None = None) -> dict[str, Any]:
+    """Run all views from one snapshot of the most recent boards.
 
     A single read guarantees that realtime abnormalities, quality cases,
     event analysis, and drilldown cannot disagree because data arrived between
-    separate stage queries.
+    separate stage queries. ``window_boards`` limits the snapshot to the most
+    recent N boards (None reads the configured default, 0 loads the full
+    table); every analysis lookback is bounded well below the default window,
+    so windowed and full runs agree wherever they overlap.
     """
+    if window_boards is None:
+        window_boards = datasource_for(database)["realtime_window_boards"]
     try:
-        full_rows = load_full_excel_rows(database)
+        full_rows = load_full_excel_rows(database, window_boards)
     except Exception as exc:  # noqa: BLE001
         error = f"{type(exc).__name__}: {exc}"
         if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
@@ -197,6 +233,7 @@ def run_pipeline(database: str | None = None) -> dict[str, Any]:
         return {
             "ok": False,
             "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "window_boards": window_boards,
             "stages": stages,
         }
 
@@ -230,8 +267,11 @@ def run_pipeline(database: str | None = None) -> dict[str, Any]:
         _stage("param_analysis", param_work),
         _stage("drilldown", drilldown_work),
     ]
+    board_field = load_datasource()["fields"]["board"]
     return {
         "ok": all(stage["ok"] for stage in stages),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "window_boards": window_boards,
+        "loaded_boards": len({row.get(board_field.lower()) for row in full_rows}),
         "stages": stages,
     }

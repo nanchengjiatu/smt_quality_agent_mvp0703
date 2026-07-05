@@ -31,6 +31,9 @@ DEFAULT_DATASOURCE: dict[str, Any] = {
         "defect": "comp_errname",
     },
     "refresh_interval_seconds": 30,
+    # Realtime runs load only the most recent N boards; 0 means the full table.
+    # Must stay well above the largest analysis lookback (~20 boards / 500 rows).
+    "realtime_window_boards": 3000,
 }
 
 
@@ -64,6 +67,10 @@ def normalize_datasource(payload: dict[str, Any]) -> dict[str, Any]:
     config["tables"]["full_spi"] = str(config["tables"].get("full_spi") or "full_excel0623").strip()
     config["tables"]["ng_events"] = str(config["tables"].get("ng_events") or "over_volume").strip()
     config["fields"]["time"] = str(config["fields"].get("time") or "fdate").strip()
+    try:
+        config["realtime_window_boards"] = max(0, int(config.get("realtime_window_boards")))
+    except (TypeError, ValueError):
+        config["realtime_window_boards"] = DEFAULT_DATASOURCE["realtime_window_boards"]
     return config
 
 

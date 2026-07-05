@@ -15,7 +15,9 @@ Endpoints:
     GET  /              -> redirect to /web/index.html
     GET  /web/*         -> static frontend files
     GET  /output/*      -> generated JSON data
-    POST /api/refresh   -> re-run pipeline, return per-stage status + version
+    POST /api/refresh   -> re-run pipeline over the realtime window, return
+                           per-stage status + version; body {"window_boards": 0}
+                           forces an on-demand full-table run
     GET  /api/datasource -> current database config, password masked
     POST /api/datasource -> save database config
     POST /api/datasource/test -> test a database config
@@ -55,6 +57,10 @@ DEFAULT_PORT = 8502
 DEFAULT_WATCH_INTERVAL = 5
 DATABASE_OVERRIDE: str | None = None
 
+# Live state survives restarts here so the data version keeps increasing and an
+# unchanged datasource does not trigger a spurious refresh after a restart.
+STATE_PATH = OUTPUT_DIR / "live_state.json"
+
 # Serializes pipeline runs so manual refresh and the watcher never write the
 # output files concurrently.
 _pipeline_lock = threading.Lock()
@@ -69,6 +75,8 @@ _live = {
     "watching": False,
     "last_check": None,
     "last_error": None,
+    "window_boards": None,
+    "loaded_boards": None,
 }
 
 
@@ -76,10 +84,39 @@ def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def run_and_record(database: str | None) -> dict:
+def load_persisted_state() -> None:
+    try:
+        with STATE_PATH.open("r", encoding="utf-8") as file:
+            saved = json.load(file)
+    except (OSError, ValueError):
+        return
+    with _state_lock:
+        _live["version"] = int(saved.get("version") or 0)
+        _live["updated_at"] = saved.get("updated_at")
+        _live["fingerprint"] = saved.get("fingerprint")
+        _live["window_boards"] = saved.get("window_boards")
+        _live["loaded_boards"] = saved.get("loaded_boards")
+
+
+def _persist_state_locked() -> None:
+    """Write the durable subset of _live; caller must hold _state_lock."""
+    payload = {
+        key: _live[key]
+        for key in ("version", "updated_at", "fingerprint", "window_boards", "loaded_boards")
+    }
+    try:
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        with STATE_PATH.open("w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False, indent=2)
+            file.write("\n")
+    except OSError as exc:
+        print(f"[state] persist failed: {exc}")
+
+
+def run_and_record(database: str | None, window_boards: int | None = None) -> dict:
     """Run the pipeline under the lock and bump the live version."""
     with _pipeline_lock:
-        report = run_pipeline(database)
+        report = run_pipeline(database, window_boards)
         try:
             fingerprint = over_volume_fingerprint(database)
         except Exception:  # noqa: BLE001 - fingerprint is best-effort here
@@ -89,6 +126,9 @@ def run_and_record(database: str | None) -> dict:
             _live["fingerprint"] = fingerprint
         _live["version"] += 1
         _live["updated_at"] = report["generated_at"]
+        _live["window_boards"] = report.get("window_boards")
+        _live["loaded_boards"] = report.get("loaded_boards")
+        _persist_state_locked()
         report = {**report, "version": _live["version"]}
     return report
 
@@ -160,7 +200,20 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - required name
         path = self.path.split("?", 1)[0].rstrip("/")
         if path == "/api/refresh":
-            self._send_json(run_and_record(DATABASE_OVERRIDE))
+            # Optional body {"window_boards": 0} forces an on-demand full-table
+            # run; realtime runs use the configured sliding window.
+            try:
+                payload = self._read_json()
+                window_boards = payload.get("window_boards")
+                if window_boards is not None:
+                    window_boards = max(0, int(window_boards))
+            except (ValueError, TypeError) as exc:
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            self._send_json(run_and_record(DATABASE_OVERRIDE, window_boards))
             return
         if path == "/api/datasource/test":
             try:
@@ -265,6 +318,7 @@ def main() -> None:
     DATABASE_OVERRIDE = args.database
     os.chdir(ROOT)
 
+    load_persisted_state()
     if not args.no_refresh_on_start:
         print("启动前先跑一次 pipeline ...")
         report = run_and_record(DATABASE_OVERRIDE)
@@ -272,12 +326,10 @@ def main() -> None:
             mark = "OK " if stage["ok"] else "FAIL"
             extra = f"{stage.get('rows', 0)} 行 {stage['ms']}ms" if stage["ok"] else stage.get("error", "")
             print(f"  [{mark}] {stage['stage']}: {extra}")
-    else:
-        # Do not block cached-mode startup on database availability. The
-        # background watcher will establish a fingerprint when PostgreSQL is
-        # reachable and refresh from that point onward.
-        with _state_lock:
-            _live["fingerprint"] = None
+    # In cached mode the persisted fingerprint (if any) carries over, so the
+    # watcher refreshes only when the datasource actually changed since the
+    # last run; without persisted state it establishes a fingerprint when
+    # PostgreSQL is reachable and refreshes from that point onward.
 
     watcher = None
     if not args.no_watch:
