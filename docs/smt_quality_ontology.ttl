@@ -10,23 +10,21 @@ smt:SMTQualityOntology
     rdf:type smt:Ontology ;
     rdfs:label "SMT Quality Agent Ontology"@en ;
     rdfs:comment "锡膏印刷 + SPI 多锡/少锡异常管理本体。"@zh ;
-    smt:version "spi-printing-v4" ;
+    smt:version "spi-printing-v5" ;
     smt:focus "锡膏印刷 + SPI 多锡/少锡异常管理"@zh .
 
 smt:ProcessStep rdf:type rdfs:Class ; rdfs:label "工序"@zh .
 smt:InspectionMethod rdf:type rdfs:Class ; rdfs:label "检测方法"@zh .
 smt:DefectDirection rdf:type rdfs:Class ; rdfs:label "缺陷方向"@zh .
-smt:AbnormalScope rdf:type rdfs:Class ; rdfs:label "异常范围(v2,已废弃)"@zh .
 smt:ProcessStage rdf:type rdfs:Class ; rdfs:label "工序阶段"@zh .
 smt:EquipmentElement rdf:type rdfs:Class ; rdfs:label "设备要素"@zh .
 smt:Material rdf:type rdfs:Class ; rdfs:label "物料"@zh .
 smt:SpatialExtent rdf:type rdfs:Class ; rdfs:label "空间范围"@zh .
 smt:TemporalPattern rdf:type rdfs:Class ; rdfs:label "时间模式"@zh .
 smt:DataValidity rdf:type rdfs:Class ; rdfs:label "数据有效性"@zh .
-smt:RootCauseCandidate rdf:type rdfs:Class ; rdfs:label "根因候选措辞(v3,已废弃,机理 label 为权威)"@zh .
+smt:RootCauseCandidate rdf:type rdfs:Class ; rdfs:label "趋势归因/兜底措辞(机理锁定不了时使用)"@zh .
 smt:FailureMechanism rdf:type rdfs:Class ; rdfs:label "失效机理"@zh .
 smt:EvidenceType rdf:type rdfs:Class ; rdfs:label "证据类型"@zh .
-smt:ActionType rdf:type rdfs:Class ; rdfs:label "排查动作(v3,已废弃,规范动作随机理声明)"@zh .
 smt:Disposition rdf:type rdfs:Class ; rdfs:label "处置方式"@zh .
 
 smt:verifiedBy rdf:type rdf:Property ; rdfs:label "由...验证"@zh .
@@ -34,8 +32,6 @@ smt:observes rdf:type rdf:Property ; rdfs:label "观察到"@zh .
 smt:causesDefect rdf:type rdf:Property ; rdfs:label "致缺陷方向"@zh .
 smt:priority rdf:type rdf:Property ; rdfs:label "优先级"@zh .
 smt:direction rdf:type rdf:Property ; rdfs:label "缺陷方向值"@zh .
-smt:judgedBy rdf:type rdf:Property ; rdfs:label "判定口径"@zh .
-smt:deprecated rdf:type rdf:Property ; rdfs:label "已废弃"@zh .
 smt:verification rdf:type rdf:Property ; rdfs:label "核验方式"@zh .
 smt:availability rdf:type rdf:Property ; rdfs:label "可得性"@zh .
 smt:affectsElement rdf:type rdf:Property ; rdfs:label "作用部位"@zh .
@@ -81,81 +77,6 @@ smt:defect.insufficient_volume
     rdfs:comment "锡膏体积、面积或高度低于工艺窗口。"@zh ;
     skos:altLabel "Insufficient Volume"@zh, "少量"@zh ;
     smt:direction "少锡"@zh .
-
-smt:scope.board_same_direction
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "整板同向"@zh ;
-    rdfs:comment "下钻口径：触发板或全量窗口内多个位置呈现同方向异常，优先判断整板制程条件。"@zh ;
-    skos:altLabel "整板同向趋势"@zh ;
-    smt:judgedBy "drilldown"@zh ;
-    smt:priority 1 ;
-    smt:deprecated true .
-
-smt:scope.board_trend
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "整板趋势异常"@zh ;
-    rdfs:comment "实时口径：单板异常点占比达到阈值（≥5% 中风险、≥10% 高风险），不区分方向。"@zh ;
-    smt:judgedBy "realtime"@zh ;
-    smt:priority 1 ;
-    smt:deprecated true .
-
-smt:scope.component_multi_pad
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "同元件多Pad异常"@zh ;
-    rdfs:comment "同一元件多个 Pad 同步异常，优先判断局部贴合、堵孔、支撑或污染。"@zh ;
-    skos:altLabel "同一元件多Pad异常"@zh ;
-    smt:judgedBy "realtime+drilldown"@zh ;
-    smt:priority 2 ;
-    smt:deprecated true .
-
-smt:scope.consecutive_same_pad
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "连续3板同点异常"@zh ;
-    rdfs:comment "下钻触发口径：同一产品、元件、Pad 连续（中间无 PASS 生产板）≥3 块生产板同方向异常，复测不计入。"@zh ;
-    skos:altLabel "连续同点异常"@zh ;
-    smt:judgedBy "drilldown"@zh ;
-    smt:priority 3 ;
-    smt:deprecated true .
-
-smt:scope.repeated_same_pad
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "同点多板异常"@zh ;
-    rdfs:comment "实时口径：同一产品、元件、Pad 在 ≥3 块不同生产板重复异常，不要求连续。"@zh ;
-    smt:judgedBy "realtime"@zh ;
-    smt:priority 3 ;
-    smt:deprecated true .
-
-smt:scope.single_pad_isolated
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "单Pad孤立异常"@zh ;
-    rdfs:comment "下钻口径：连续触发局限于单 Pad，同元件其他 Pad 与全量窗口均未见扩散。"@zh ;
-    smt:judgedBy "drilldown"@zh ;
-    smt:priority 4 ;
-    smt:deprecated true .
-
-smt:scope.single_point_random
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "单点偶发异常"@zh ;
-    rdfs:comment "实时口径：单个 Pad 偶发异常，优先做快速复核和短程复判。"@zh ;
-    skos:altLabel "单点偶发"@zh ;
-    smt:judgedBy "realtime"@zh ;
-    smt:priority 4 ;
-    smt:deprecated true .
-
-smt:scope.local_area
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "局部区域"@zh ;
-    rdfs:comment "同一局部区域多个 Pad 或元件异常，优先判断局部钢网、PCB 支撑和贴合状态。"@zh ;
-    skos:altLabel "区域异常"@zh ;
-    smt:judgedBy "drilldown"@zh ;
-    smt:deprecated true .
-
-smt:scope.suspected_spi_false_alarm
-    rdf:type smt:AbnormalScope ;
-    rdfs:label "疑似SPI假异常"@zh ;
-    rdfs:comment "排除项驱动的归类：NG 标签与主指标偏差不一致，先复核 SPI 程序/识别框/阈值，再谈物理根因。"@zh ;
-    smt:judgedBy "drilldown"@zh ;
-    smt:deprecated true .
 
 smt:stage.alignment
     rdf:type smt:ProcessStage ;
@@ -276,90 +197,6 @@ smt:validity.data_suspect
     rdf:type smt:DataValidity ;
     rdfs:label "数据连续性存疑"@zh ;
     rdfs:comment "触发段含复测/跨机种/板数不足等数据疑点。"@zh .
-
-smt:root_cause.stencil_single_aperture_residue
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "钢网单孔底部残锡或开口异常"@zh ;
-    rdfs:comment "v3 单 Pad 多锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.understencil_residue .
-
-smt:root_cause.stencil_single_aperture_blockage
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "钢网单孔堵塞或脱模不良"@zh ;
-    rdfs:comment "v3 单 Pad 少锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.aperture_clogging .
-
-smt:root_cause.component_area_stencil_contamination
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "元件区域钢网底部污染或贴合不良"@zh ;
-    rdfs:comment "v3 同元件多 Pad 多锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.understencil_residue .
-
-smt:root_cause.component_area_blockage_or_support
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "元件区域堵孔或局部支撑不足"@zh ;
-    rdfs:comment "v3 同元件多 Pad 少锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.aperture_clogging .
-
-smt:root_cause.local_stencil_contamination
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "局部钢网污染、变形或支撑异常"@zh ;
-    rdfs:comment "v3 局部区域多锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.poor_gasketing .
-
-smt:root_cause.local_stencil_blockage_or_rolling
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "局部钢网堵塞、锡膏滚动或支撑异常"@zh ;
-    rdfs:comment "v3 局部区域少锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.aperture_clogging .
-
-smt:root_cause.board_printing_condition_drift
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "整板印刷条件或锡膏状态漂移"@zh ;
-    rdfs:comment "v3 整板同向多锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.paste_rheology_drift .
-
-smt:root_cause.board_paste_supply_or_print_action
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "锡膏供给中断或整板印刷动作异常"@zh ;
-    rdfs:comment "v3 整板同向少锡措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.supply_interruption .
-
-smt:root_cause.spi_program_false_alarm
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "SPI程序阈值或识别框异常"@zh ;
-    rdfs:comment "v3 SPI 排除项措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.spi_false_call .
-
-smt:root_cause.parameter_setpoint_drift
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "印刷参数实际值偏离设定"@zh ;
-    rdfs:comment "v3 参数漂移措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.parameter_mismatch .
-
-smt:root_cause.printing_program_mismatch
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "印刷程序设定不适配"@zh ;
-    rdfs:comment "v3 参数恢复措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.parameter_mismatch .
-
-smt:root_cause.maintenance_cycle_mismatch
-    rdf:type smt:RootCauseCandidate ;
-    rdfs:label "钢网清洗或锡膏维护周期不匹配"@zh ;
-    rdfs:comment "v3 周期复发措辞,现由机理 label 表达。"@zh ;
-    smt:deprecated true ;
-    smt:expressesMechanism smt:mech.cleaning_cycle_mismatch .
 
 smt:root_cause.cumulative_state_degradation
     rdf:type smt:RootCauseCandidate ;
@@ -541,36 +378,6 @@ smt:evidence.alignment_check
     rdfs:label "Fiducial/对位复核"@zh ;
     rdfs:comment "视觉识别、Gerber/钢网/PCB 对位的现场复核。"@zh ;
     smt:verification "manual"@zh .
-
-smt:action.inspect_single_stencil_aperture
-    rdf:type smt:ActionType ;
-    rdfs:label "检查单个钢网孔"@zh ;
-    rdfs:comment "检查触发 Pad 对应钢网孔底部残锡、孔壁、开口尺寸和清洁状态。"@zh ;
-    smt:deprecated true .
-
-smt:action.clean_blocked_aperture
-    rdf:type smt:ActionType ;
-    rdfs:label "清洁堵塞钢网孔"@zh ;
-    rdfs:comment "显微检查并清洁对应钢网孔，确认通透性和脱模条件。"@zh ;
-    smt:deprecated true .
-
-smt:action.inspect_component_area
-    rdf:type smt:ActionType ;
-    rdfs:label "检查元件区域印刷条件"@zh ;
-    rdfs:comment "检查元件区域钢网底部污染、局部贴合、PCB 支撑和平整度。"@zh ;
-    smt:deprecated true .
-
-smt:action.review_board_printing_conditions
-    rdf:type smt:ActionType ;
-    rdfs:label "复核整板印刷条件"@zh ;
-    rdfs:comment "复核锡膏状态、刮刀参数、钢网底面和整板印刷动作。"@zh ;
-    smt:deprecated true .
-
-smt:action.review_raw_spi_image
-    rdf:type smt:ActionType ;
-    rdfs:label "复核原始SPI图像"@zh ;
-    rdfs:comment "复核测量框、Gerber 对位、上下限和主指标偏差。"@zh ;
-    smt:deprecated true .
 
 smt:disposition.data_continuity_review
     rdf:type smt:Disposition ;

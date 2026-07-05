@@ -22,23 +22,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ONTOLOGY_VERSION = "spi-printing-v4"
+ONTOLOGY_VERSION = "spi-printing-v5"
 ONTOLOGY_FOCUS = "锡膏印刷 + SPI 多锡/少锡异常管理"
 
-# v4 层次(docs/knowledge_model_v3_design.md,v4 为收敛版):
-#   实体层  ProcessStage / EquipmentElement / Material
+# 层次(docs/knowledge_model_v3_design.md;v4 收敛,v5 删除全部废弃词表):
+#   实体层  ProcessStage / EquipmentElement / Material —— 问题落在哪个物理对象
 #   观测层  SpatialExtent / TemporalPattern / DataValidity 三个正交判定轴
 #          + EvidenceType(verification: auto|manual, availability)
+#          —— 数据里看到了什么,纯计算事实,不含解释
 #   机理层  FailureMechanism(部位 × 签名 × 起病 × 可预警性 × 证据 × 规范动作)
-#          —— v4 起机理是根因词表的唯一权威:规则候选的 cause 显示文本
-#          直接取机理 label,不再各自维护措辞。
+#          —— 为什么会这样;机理是根因词表的唯一权威:规则候选的 cause
+#          显示文本直接取机理 label,不再各自维护措辞
 #   决策层  在 knowledge_base.py(诊断规则引用这里的机理与证据)
-# 废弃概念保留一个版本(properties.deprecated=true)供旧记录解析:
-#   - v2 AbnormalScope(三轴是权威表达,显示标签仍在用)
-#   - v2/v3 RootCauseCandidate(机理 label 是权威根因词表;每个旧概念标注
-#     properties.mechanism 指向对应机理。趋势归因两条除外——趋势形态
-#     不足以锁定机理,仍是在用词表)
-#   - ActionType(规范动作随机理声明,场景化动作在规则里)
+#          —— 该怎么判、怎么办,工厂策略,现场可调
+# v2 AbnormalScope / v2/v3 RootCauseCandidate 措辞 / v3 ActionType 已于 v5
+# 删除(deprecated 词表按计划保留了一个版本);范围的权威表达是三轴组合。
 
 
 @dataclass(frozen=True)
@@ -112,82 +110,6 @@ CONCEPTS = [
         ("Insufficient Volume", "少量"),
         {"direction": "少锡"},
     ),
-    # -- Abnormal scopes -----------------------------------------------------
-    # 实时(rules_engine)与下钻(drilldown)的判定口径不同：实时按单板/跨板计数
-    # 归类，下钻基于前后全量 SPI 窗口归类。口径不同的判断注册为不同概念，
-    # 不共用标签。
-    OntologyConcept(
-        "scope.board_same_direction",
-        "AbnormalScope",
-        "整板同向",
-        "下钻口径：触发板或全量窗口内多个位置呈现同方向异常，优先判断整板制程条件。",
-        ("整板同向趋势",),
-        {"judged_by": "drilldown", "priority": 1, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.board_trend",
-        "AbnormalScope",
-        "整板趋势异常",
-        "实时口径：单板异常点占比达到阈值（≥5% 中风险、≥10% 高风险），不区分方向。",
-        (),
-        {"judged_by": "realtime", "priority": 1, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.component_multi_pad",
-        "AbnormalScope",
-        "同元件多Pad异常",
-        "同一元件多个 Pad 同步异常，优先判断局部贴合、堵孔、支撑或污染。",
-        ("同一元件多Pad异常",),
-        {"judged_by": "realtime+drilldown", "priority": 2, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.consecutive_same_pad",
-        "AbnormalScope",
-        "连续3板同点异常",
-        "下钻触发口径：同一产品、元件、Pad 连续（中间无 PASS 生产板）≥3 块生产板同方向异常，复测不计入。",
-        ("连续同点异常",),
-        {"judged_by": "drilldown", "priority": 3, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.repeated_same_pad",
-        "AbnormalScope",
-        "同点多板异常",
-        "实时口径：同一产品、元件、Pad 在 ≥3 块不同生产板重复异常，不要求连续。",
-        (),
-        {"judged_by": "realtime", "priority": 3, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.single_pad_isolated",
-        "AbnormalScope",
-        "单Pad孤立异常",
-        "下钻口径：连续触发局限于单 Pad，同元件其他 Pad 与全量窗口均未见扩散。",
-        (),
-        {"judged_by": "drilldown", "priority": 4, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.single_point_random",
-        "AbnormalScope",
-        "单点偶发异常",
-        "实时口径：单个 Pad 偶发异常，优先做快速复核和短程复判。",
-        ("单点偶发",),
-        {"judged_by": "realtime", "priority": 4, "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.local_area",
-        "AbnormalScope",
-        "局部区域",
-        "同一局部区域多个 Pad 或元件异常，优先判断局部钢网、PCB 支撑和贴合状态。",
-        ("区域异常",),
-        {"judged_by": "drilldown", "deprecated": True},
-    ),
-    OntologyConcept(
-        "scope.suspected_spi_false_alarm",
-        "AbnormalScope",
-        "疑似SPI假异常",
-        "排除项驱动的归类：NG 标签与主指标偏差不一致，先复核 SPI 程序/识别框/阈值，再谈物理根因。",
-        (),
-        {"judged_by": "drilldown", "deprecated": True},
-    ),
     # -- Entity layer (骨架；台账化等接入 MES/设备数据后再展开) -----------------
     OntologyConcept("stage.alignment", "ProcessStage", "对位",
                     "印刷循环第一段：视觉识别 Fiducial，钢网与 PCB 对位。"),
@@ -238,94 +160,9 @@ CONCEPTS = [
                     "NG 标签但主指标偏差不显著,需先复核 SPI 程序。"),
     OntologyConcept("validity.data_suspect", "DataValidity", "数据连续性存疑",
                     "触发段含复测/跨机种/板数不足等数据疑点。"),
-    # -- Root cause candidates (v2/v3 措辞词表,已废弃) --------------------------
-    # v4 起根因显示文本 = 机理 label(单源);这些概念保留供旧记录/旧契约
-    # 解析,properties.mechanism 指向对应机理。仅趋势归因两条仍在用——
-    # 趋势形态不足以锁定机理,是独立于机理层的归因词表。
-    OntologyConcept(
-        "root_cause.stencil_single_aperture_residue",
-        "RootCauseCandidate",
-        "钢网单孔底部残锡或开口异常",
-        "v3 单 Pad 多锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.understencil_residue"},
-    ),
-    OntologyConcept(
-        "root_cause.stencil_single_aperture_blockage",
-        "RootCauseCandidate",
-        "钢网单孔堵塞或脱模不良",
-        "v3 单 Pad 少锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.aperture_clogging"},
-    ),
-    OntologyConcept(
-        "root_cause.component_area_stencil_contamination",
-        "RootCauseCandidate",
-        "元件区域钢网底部污染或贴合不良",
-        "v3 同元件多 Pad 多锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.understencil_residue"},
-    ),
-    OntologyConcept(
-        "root_cause.component_area_blockage_or_support",
-        "RootCauseCandidate",
-        "元件区域堵孔或局部支撑不足",
-        "v3 同元件多 Pad 少锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.aperture_clogging"},
-    ),
-    OntologyConcept(
-        "root_cause.local_stencil_contamination",
-        "RootCauseCandidate",
-        "局部钢网污染、变形或支撑异常",
-        "v3 局部区域多锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.poor_gasketing"},
-    ),
-    OntologyConcept(
-        "root_cause.local_stencil_blockage_or_rolling",
-        "RootCauseCandidate",
-        "局部钢网堵塞、锡膏滚动或支撑异常",
-        "v3 局部区域少锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.aperture_clogging"},
-    ),
-    OntologyConcept(
-        "root_cause.board_printing_condition_drift",
-        "RootCauseCandidate",
-        "整板印刷条件或锡膏状态漂移",
-        "v3 整板同向多锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.paste_rheology_drift"},
-    ),
-    OntologyConcept(
-        "root_cause.board_paste_supply_or_print_action",
-        "RootCauseCandidate",
-        "锡膏供给中断或整板印刷动作异常",
-        "v3 整板同向少锡措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.supply_interruption"},
-    ),
-    OntologyConcept(
-        "root_cause.spi_program_false_alarm",
-        "RootCauseCandidate",
-        "SPI程序阈值或识别框异常",
-        "v3 SPI 排除项措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.spi_false_call"},
-    ),
-    OntologyConcept(
-        "root_cause.parameter_setpoint_drift",
-        "RootCauseCandidate",
-        "印刷参数实际值偏离设定",
-        "v3 参数漂移措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.parameter_mismatch"},
-    ),
-    OntologyConcept(
-        "root_cause.printing_program_mismatch",
-        "RootCauseCandidate",
-        "印刷程序设定不适配",
-        "v3 参数恢复措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.parameter_mismatch"},
-    ),
-    OntologyConcept(
-        "root_cause.maintenance_cycle_mismatch",
-        "RootCauseCandidate",
-        "钢网清洗或锡膏维护周期不匹配",
-        "v3 周期复发措辞,现由机理 label 表达。",
-        (), {"deprecated": True, "mechanism": "mech.cleaning_cycle_mismatch"},
-    ),
+    # -- Trend attribution vocabulary ------------------------------------------
+    # 根因显示文本 = 机理 label(单源)。此处仅保留机理锁定不了的三条归因措辞:
+    # 两条趋势归因(趋势形态不足以锁定物理机理)+ 一条证据不足时的兜底措辞。
     OntologyConcept(
         "root_cause.cumulative_state_degradation",
         "RootCauseCandidate",
@@ -424,42 +261,6 @@ CONCEPTS = [
     OntologyConcept("evidence.alignment_check", "EvidenceType", "Fiducial/对位复核",
                     "视觉识别、Gerber/钢网/PCB 对位的现场复核。",
                     (), {"verification": "manual"}),
-    # -- Actions (v3 词表,已废弃：规范动作随机理声明,场景化动作在规则里) --------
-    OntologyConcept(
-        "action.inspect_single_stencil_aperture",
-        "ActionType",
-        "检查单个钢网孔",
-        "检查触发 Pad 对应钢网孔底部残锡、孔壁、开口尺寸和清洁状态。",
-        (), {"deprecated": True},
-    ),
-    OntologyConcept(
-        "action.clean_blocked_aperture",
-        "ActionType",
-        "清洁堵塞钢网孔",
-        "显微检查并清洁对应钢网孔，确认通透性和脱模条件。",
-        (), {"deprecated": True},
-    ),
-    OntologyConcept(
-        "action.inspect_component_area",
-        "ActionType",
-        "检查元件区域印刷条件",
-        "检查元件区域钢网底部污染、局部贴合、PCB 支撑和平整度。",
-        (), {"deprecated": True},
-    ),
-    OntologyConcept(
-        "action.review_board_printing_conditions",
-        "ActionType",
-        "复核整板印刷条件",
-        "复核锡膏状态、刮刀参数、钢网底面和整板印刷动作。",
-        (), {"deprecated": True},
-    ),
-    OntologyConcept(
-        "action.review_raw_spi_image",
-        "ActionType",
-        "复核原始SPI图像",
-        "复核测量框、Gerber 对位、上下限和主指标偏差。",
-        (), {"deprecated": True},
-    ),
     # -- Dispositions (与 knowledge_base.DISPOSITION_RULES 一一对应的处置词表) ---
     OntologyConcept(
         "disposition.data_continuity_review",
@@ -764,8 +565,7 @@ def _label_to_id(concept_type: str) -> dict[str, str]:
 
 
 DIRECTION_TO_CONCEPT_ID = _label_to_id("DefectDirection")
-SCOPE_TO_CONCEPT_ID = _label_to_id("AbnormalScope")
-# 根因词表：机理 label 是权威;废弃的 v2/v3 措辞保留映射,旧记录仍可解析。
+# 根因词表：机理 label 是权威;RootCauseCandidate 只剩趋势归因/兜底三条在用措辞。
 CAUSE_TO_CONCEPT_ID = {**_label_to_id("RootCauseCandidate"), **_label_to_id("FailureMechanism")}
 
 MECHANISMS = {
@@ -816,7 +616,6 @@ def ontology_snapshot() -> dict[str, Any]:
         "relations": [relation.to_dict() for relation in RELATIONS],
         "mappings": {
             "direction": DIRECTION_TO_CONCEPT_ID,
-            "scope": SCOPE_TO_CONCEPT_ID,
             "cause": CAUSE_TO_CONCEPT_ID,
         },
     }
@@ -824,14 +623,12 @@ def ontology_snapshot() -> dict[str, Any]:
 
 def ontology_ids_for(
     direction: str | None = None,
-    scope: str | None = None,
     cause: str | None = None,
 ) -> dict[str, str]:
+    """范围没有单独 ID——权威表达是契约 scope 里的三轴概念 ID 组合。"""
     ids = {}
     if direction and direction in DIRECTION_TO_CONCEPT_ID:
         ids["direction"] = DIRECTION_TO_CONCEPT_ID[direction]
-    if scope and scope in SCOPE_TO_CONCEPT_ID:
-        ids["scope"] = SCOPE_TO_CONCEPT_ID[scope]
     if cause and cause in CAUSE_TO_CONCEPT_ID:
         ids["cause"] = CAUSE_TO_CONCEPT_ID[cause]
     return ids
@@ -849,17 +646,15 @@ _TTL_CLASS_LABELS = {
     "ProcessStep": "工序",
     "InspectionMethod": "检测方法",
     "DefectDirection": "缺陷方向",
-    "AbnormalScope": "异常范围(v2,已废弃)",
     "ProcessStage": "工序阶段",
     "EquipmentElement": "设备要素",
     "Material": "物料",
     "SpatialExtent": "空间范围",
     "TemporalPattern": "时间模式",
     "DataValidity": "数据有效性",
-    "RootCauseCandidate": "根因候选措辞(v3,已废弃,机理 label 为权威)",
+    "RootCauseCandidate": "趋势归因/兜底措辞(机理锁定不了时使用)",
     "FailureMechanism": "失效机理",
     "EvidenceType": "证据类型",
-    "ActionType": "排查动作(v3,已废弃,规范动作随机理声明)",
     "Disposition": "处置方式",
 }
 
@@ -869,8 +664,6 @@ _TTL_PROPERTY_LABELS = {
     "causesDefect": "致缺陷方向",
     "priority": "优先级",
     "direction": "缺陷方向值",
-    "judgedBy": "判定口径",
-    "deprecated": "已废弃",
     "verification": "核验方式",
     "availability": "可得性",
     "affectsElement": "作用部位",
@@ -892,8 +685,6 @@ _TTL_PROPERTY_LABELS = {
 _TTL_PROPERTY_KEYS = {
     "priority": "priority",
     "direction": "direction",
-    "judged_by": "judgedBy",
-    "deprecated": "deprecated",
     "verification": "verification",
     "availability": "availability",
     "element": "affectsElement",

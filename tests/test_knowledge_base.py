@@ -21,10 +21,10 @@ from smt_quality_agent.knowledge_base import (
     rule_catalog,
     scope_root_cause_candidate,
 )
+from smt_quality_agent.knowledge_base import SCOPE_CATEGORY_LABELS
 from smt_quality_agent.ontology import (
     CAUSE_TO_CONCEPT_ID,
     MECHANISMS,
-    SCOPE_TO_CONCEPT_ID,
     concept_by_id,
     concept_label,
 )
@@ -74,11 +74,11 @@ class RuleRegistryTest(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
 
     def test_scope_rule_conditions_use_registered_vocabulary(self) -> None:
-        # 规则条件里的 scope/pattern 必须是本体注册过的词，杜绝并行词表。
+        # 规则条件里的 scope/pattern 必须是注册过的类别词表，杜绝并行词表。
         for rule in RULES:
             scope = rule["condition"].get("scope") or rule["condition"].get("abnormal_pattern")
             if scope and scope != "*":
-                self.assertIn(scope, SCOPE_TO_CONCEPT_ID, f"{rule['id']}: {scope}")
+                self.assertIn(scope, SCOPE_CATEGORY_LABELS, f"{rule['id']}: {scope}")
 
     def test_confidence_ladder_orders_direct_evidence_above_candidates(self) -> None:
         spi = rule_by_id("rule.spi_false_alarm_review")
@@ -490,14 +490,15 @@ class DispositionTest(unittest.TestCase):
 
 class OntologyEnrichmentTest(unittest.TestCase):
     def test_enriches_rule_output_with_ontology_ids(self) -> None:
+        # 根因 ID 由机理 label 解析;范围不再有单独 ID(权威表达是三轴组合)。
         enriched = enrich_with_ontology_ids({
             "direction": "少锡",
             "category": "同元件多Pad异常",
-            "cause": "钢网单孔堵塞或脱模不良",
+            "cause": "钢网开口堵塞",
         })
         self.assertEqual(enriched["ontology_ids"]["direction"], "defect.insufficient_volume")
-        self.assertEqual(enriched["ontology_ids"]["scope"], "scope.component_multi_pad")
-        self.assertEqual(enriched["ontology_ids"]["cause"], "root_cause.stencil_single_aperture_blockage")
+        self.assertEqual(enriched["ontology_ids"]["cause"], "mech.aperture_clogging")
+        self.assertNotIn("scope", enriched["ontology_ids"])
 
 
 if __name__ == "__main__":

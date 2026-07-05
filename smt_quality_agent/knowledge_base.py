@@ -91,6 +91,25 @@ PATTERN_AXES = {
     "单点偶发异常": ("spatial.single_pad", "temporal.sporadic"),
 }
 
+# 下钻范围类别:空间轴 → 显示标签。范围的权威表达是三轴概念 ID 组合,
+# 类别标签只是给 UI 和规则条件用的投影词表——此处单源注册,杜绝并行词表。
+DRILLDOWN_SPATIAL_CATEGORY = {
+    "spatial.board_wide": "整板同向",
+    "spatial.component_multi_pad": "同元件多Pad异常",
+    "spatial.local_area": "局部区域",
+    "spatial.single_pad": "单Pad孤立异常",
+}
+
+# 数据有效性轴驱动的类别:NG 标签与主指标不符时覆盖空间类别。
+SPI_FALSE_ALARM_CATEGORY = "疑似SPI假异常"
+
+# 规则条件 condition.scope / condition.abnormal_pattern 允许使用的全部标签。
+SCOPE_CATEGORY_LABELS = frozenset({
+    *DRILLDOWN_SPATIAL_CATEGORY.values(),
+    SPI_FALSE_ALARM_CATEGORY,
+    *PATTERN_AXES.keys(),
+})
+
 # 事件分组轴 → 空间范围集合(事件分析只分整板/局部,局部覆盖三种局部范围)。
 _EVENT_SCOPE_SPATIAL = {
     EVENT_SCOPE_BOARD: ("spatial.board_wide",),
@@ -1172,7 +1191,6 @@ def diagnose(observation: dict[str, Any]) -> dict[str, Any]:
         item["priority"] = priority
         item["ontology_ids"] = ontology_ids_for(
             direction=observation.get("direction"),
-            scope=observation.get("category"),
             cause=item["cause"],
         )
 
@@ -1317,7 +1335,6 @@ def enrich_with_ontology_ids(item: dict[str, Any]) -> dict[str, Any]:
     """Attach stable ontology IDs to user-facing rule output."""
     ids = ontology_ids_for(
         direction=item.get("direction"),
-        scope=item.get("category") or item.get("scope"),
         cause=item.get("cause") or item.get("primary_cause"),
     )
     return {**item, "ontology_ids": ids} if ids else item

@@ -4,7 +4,12 @@ from datetime import datetime
 from typing import Any
 
 from smt_quality_agent.affected_model import split_component_pad
-from smt_quality_agent.knowledge_base import diagnose, disposition_for
+from smt_quality_agent.knowledge_base import (
+    DRILLDOWN_SPATIAL_CATEGORY,
+    SPI_FALSE_ALARM_CATEGORY,
+    diagnose,
+    disposition_for,
+)
 from smt_quality_agent.ontology import concept_label, ontology_ids_for
 from smt_quality_agent.param_correlation import (
     BOARD_WIDE_MIN_BOARD_ROWS,
@@ -823,17 +828,12 @@ def classify_scope(
     else:
         validity = "validity.valid"
 
-    # 组合显示标签：沿用 v2 词表,UI 与规则条件兼容。
+    # 组合显示标签:类别词表单源注册在 knowledge_base,UI 与规则条件共用。
     if validity == "validity.spi_suspect":
-        category = "疑似SPI假异常"
+        category = SPI_FALSE_ALARM_CATEGORY
         detail = "触发记录的缺陷标签与关键度量值不一致，需优先复核 SPI 程序、识别框和阈值。"
     else:
-        category = {
-            "spatial.board_wide": "整板同向",
-            "spatial.component_multi_pad": "同元件多Pad异常",
-            "spatial.local_area": "局部区域",
-            "spatial.single_pad": "单Pad孤立异常",
-        }[spatial]
+        category = DRILLDOWN_SPATIAL_CATEGORY[spatial]
         detail = spatial_detail
 
     return {
@@ -1074,7 +1074,7 @@ def build_analysis_contract(
             "validity": scope_classification["validity"],
             "validity_label": concept_label(scope_classification["validity"]),
             "confidence": confidence,
-            "ontology_ids": ontology_ids_for(direction=direction, scope=category),
+            "ontology_ids": ontology_ids_for(direction=direction),
         },
         "evidence": {
             "summary": evidence_summary,

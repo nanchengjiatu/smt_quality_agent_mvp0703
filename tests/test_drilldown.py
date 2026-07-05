@@ -307,10 +307,7 @@ class ScopeTest(unittest.TestCase):
     def test_isolated_pad(self) -> None:
         contract = first_contract(make_boards(trigger_specs(10, 3, 2)))
         self.assertEqual(contract["scope"]["category"], "单Pad孤立异常")
-        self.assertEqual(
-            contract["scope"]["ontology_ids"]["scope"],
-            "scope.single_pad_isolated",
-        )
+        self.assertEqual(contract["scope"]["spatial"], "spatial.single_pad")
 
     def test_sibling_pad_failing_widens_scope_to_component(self) -> None:
         specs = trigger_specs(10, 3, 2)
@@ -345,10 +342,7 @@ class ScopeTest(unittest.TestCase):
             spec["avdp"] = 12.0
         contract = first_contract(make_boards(specs))
         self.assertEqual(contract["scope"]["category"], "疑似SPI假异常")
-        self.assertEqual(
-            contract["scope"]["ontology_ids"]["scope"],
-            "scope.suspected_spi_false_alarm",
-        )
+        self.assertEqual(contract["scope"]["validity"], "validity.spi_suspect")
         spi_check = next(
             item for item in contract["evidence"]["exclusion_checks"]
             if item["name"] == "SPI 假异常"

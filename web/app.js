@@ -841,9 +841,8 @@ const CONCEPT_TYPE_LABELS = {
   SpatialExtent: "空间范围",
   TemporalPattern: "时间模式",
   DataValidity: "数据有效性",
-  RootCauseCandidate: "根因候选",
+  RootCauseCandidate: "趋势归因词表",
   Disposition: "处置方式",
-  AbnormalScope: "范围(v2,已废弃)",
 };
 
 // 本体分层关系图:实体(阶段/部位) ← 机理 → 证据。手写 SVG,零依赖。
@@ -1083,37 +1082,51 @@ function renderRulesView() {
     + mechanismCards.reduce((sum, card) => sum + card.rules.length, 0);
 
   const graph = buildOntologyGraph(state.ontology);
-  const axes = ((state.ontology || {}).concepts || []).filter((item) =>
+  const concepts = (state.ontology || {}).concepts || [];
+  const axes = concepts.filter((item) =>
     ["SpatialExtent", "TemporalPattern", "DataValidity"].includes(item.type));
+  const countOf = (type) => concepts.filter((item) => item.type === type).length;
+  const entityCount = countOf("ProcessStage") + countOf("EquipmentElement") + countOf("Material");
 
   viewRoot.innerHTML = `
     <section class="rules-view">
       <div class="rules-head">
         <div>
           <h2>本体/知识库</h2>
-          <p class="details">
-            ${escapeHtml(((state.ontology || {}).version) || "")} · ${escapeHtml(catalog.version || "")} ·
-            浏览动线：<strong>本体分层图</strong>(实体←机理→证据) →
-            <strong>诊断决策梯</strong> → <strong>机理与规则明细</strong> → <strong>处置策略</strong>
-          </p>
+          <p class="details">${escapeHtml(((state.ontology || {}).version) || "")} · ${escapeHtml(catalog.version || "")}
+            · 分层依据:三类知识的来源、置信度与变化节奏不同,各自单源维护</p>
         </div>
         <div class="rules-count">${shownCount} / ${rules.length}</div>
       </div>
 
-      <section class="panel">
-        <h2>① 本体分层图
-          <span class="details">工序阶段/部位 ← 失效机理 → 证据 · 点击节点联动高亮</span>
+      <div class="layer-guide">
+        <a class="layer-card" href="#layer-observation">
+          <span class="layer-name">观测层</span>
+          <strong>数据里看到了什么？</strong>
+          <span class="details">纯计算事实,不含解释。三个正交判定轴(${axes.length} 个取值)+ ${countOf("EvidenceType")} 种证据。错了改算法。</span>
+        </a>
+        <a class="layer-card" href="#layer-mechanism">
+          <span class="layer-name">机理层</span>
+          <strong>为什么会这样？</strong>
+          <span class="details">锡膏印刷工艺知识,先验随产线数据校准。${countOf("FailureMechanism")} 个失效机理,根因词表的唯一权威。错了改知识。</span>
+        </a>
+        <a class="layer-card" href="#layer-decision">
+          <span class="layer-name">决策层</span>
+          <strong>该怎么判、怎么办？</strong>
+          <span class="details">工厂策略,现场可调。决策管道 ${decisionRules.length} 条 + 处置阶梯 ${dispositionRules.length} 级。错了调阈值/顺序。</span>
+        </a>
+        <span class="layer-card layer-card-pending">
+          <span class="layer-name">实体层</span>
+          <strong>落在哪个物理对象上？</strong>
+          <span class="details">${entityCount} 个阶段/部位/物料骨架,现为机理的部位标注(全景图左两列);台账化待 MES 数据接入。</span>
+        </span>
+      </div>
+
+      <section class="panel" id="layer-observation">
+        <h2>① 观测层 · 三个正交判定轴
+          <span class="details">任何一次触发的"范围"都表达为三轴各取一值的组合;证据按机理挂载,见 ③ 机理卡片</span>
         </h2>
-        <div class="onto-layout">
-          <div class="onto-graph-wrap">
-            ${state.ontology ? renderOntologyGraph(graph, state.ontologyNode) : `<div class="empty">本体数据加载失败，请确认 /api/ontology 可访问。</div>`}
-          </div>
-          <aside class="onto-detail" id="ontoDetail">
-            ${renderOntologyDetail(graph, state.ontologyNode)}
-          </aside>
-        </div>
         <div class="onto-axes">
-          <span class="details">三个正交判定轴：</span>
           ${["SpatialExtent", "TemporalPattern", "DataValidity"].map((type) => `
             <span class="onto-axis-group">
               <em>${escapeHtml(CONCEPT_TYPE_LABELS[type])}</em>
@@ -1125,13 +1138,22 @@ function renderRulesView() {
         </div>
       </section>
 
-      <section class="panel">
-        <h2>② 诊断决策管道 <span class="details">观测输入自左向右流经各段;每段内 order 越小越先求值</span></h2>
-        ${renderDecisionPipeline(decisionRules)}
+      <section class="panel" id="layer-mechanism">
+        <h2>② 机理层 · 关系全景
+          <span class="details">工序阶段/部位 ← 失效机理 → 证据 · 点击节点联动高亮</span>
+        </h2>
+        <div class="onto-layout">
+          <div class="onto-graph-wrap">
+            ${state.ontology ? renderOntologyGraph(graph, state.ontologyNode) : `<div class="empty">本体数据加载失败，请确认 /api/ontology 可访问。</div>`}
+          </div>
+          <aside class="onto-detail" id="ontoDetail">
+            ${renderOntologyDetail(graph, state.ontologyNode)}
+          </aside>
+        </div>
       </section>
 
       <section class="panel">
-        <h2>③ 机理目录与规则 <span class="details">${(catalog.mechanisms || []).length} 个失效机理 · 规则按其绑定的机理分组</span></h2>
+        <h2>③ 机理层 · 机理目录 <span class="details">${(catalog.mechanisms || []).length} 个失效机理(根因词表唯一权威) · 证据与绑定规则挂在各机理卡下</span></h2>
         <div class="mech-list">
           ${mechanismCards.map(renderMechanismCard).join("")}
           ${unboundRules.length ? `
@@ -1147,8 +1169,13 @@ function renderRulesView() {
         </div>
       </section>
 
+      <section class="panel" id="layer-decision">
+        <h2>④ 决策层 · 诊断决策管道 <span class="details">观测输入自左向右流经各段;每段内 order 越小越先求值</span></h2>
+        ${renderDecisionPipeline(decisionRules)}
+      </section>
+
       <section class="panel">
-        <h2>④ 处置策略 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
+        <h2>⑤ 决策层 · 处置阶梯 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
         <div class="ladder">
           ${dispositionRules.map((rule) => `
             <div class="ladder-step">

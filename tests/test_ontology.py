@@ -2,7 +2,6 @@ import unittest
 
 from smt_quality_agent.ontology import (
     CONCEPTS,
-    SCOPE_TO_CONCEPT_ID,
     concept_by_id,
     ontology_ids_for,
     ontology_snapshot,
@@ -12,11 +11,11 @@ from smt_quality_agent.ontology import (
 class OntologyTest(unittest.TestCase):
     def test_snapshot_exposes_core_concepts_and_relations(self) -> None:
         snapshot = ontology_snapshot()
-        self.assertEqual(snapshot["version"], "spi-printing-v4")
+        self.assertEqual(snapshot["version"], "spi-printing-v5")
         concept_ids = {item["id"] for item in snapshot["concepts"]}
         self.assertIn("process.solder_paste_printing", concept_ids)
         self.assertIn("inspection.spi", concept_ids)
-        self.assertIn("scope.consecutive_same_pad", concept_ids)
+        self.assertIn("mech.aperture_clogging", concept_ids)
         self.assertTrue(snapshot["relations"])
 
     def test_mechanism_defect_relations_are_generated_from_direction(self) -> None:
@@ -33,20 +32,33 @@ class OntologyTest(unittest.TestCase):
         self.assertIn(("mech.poor_gasketing", "defect.over_volume"), edges)
         self.assertIn(("mech.poor_gasketing", "defect.insufficient_volume"), edges)
 
-    def test_deprecated_root_causes_point_to_their_mechanism(self) -> None:
+    def test_no_deprecated_concepts_remain(self) -> None:
+        # v5 已删除全部废弃词表(v2 AbnormalScope、v3 根因措辞、v3 ActionType);
+        # 新概念一律不得以 deprecated 形式入库,直接删。
         snapshot = ontology_snapshot()
-        mechanisms = {
-            item["id"] for item in snapshot["concepts"]
-            if item["type"] == "FailureMechanism"
-        }
+        types = {item["type"] for item in snapshot["concepts"]}
+        self.assertNotIn("AbnormalScope", types)
+        self.assertNotIn("ActionType", types)
         for item in snapshot["concepts"]:
-            if item["type"] != "RootCauseCandidate":
-                continue
-            props = item.get("properties") or {}
-            if props.get("deprecated"):
-                self.assertIn(props.get("mechanism"), mechanisms, item["id"])
+            self.assertFalse(
+                (item.get("properties") or {}).get("deprecated"),
+                item["id"],
+            )
 
-    def test_v3_layers_are_present(self) -> None:
+    def test_root_cause_vocabulary_is_only_trend_and_fallback(self) -> None:
+        # 根因显示文本的权威是机理 label;RootCauseCandidate 只保留机理锁定
+        # 不了的三条:两条趋势归因 + 一条证据不足兜底。
+        ids = {
+            item["id"] for item in ontology_snapshot()["concepts"]
+            if item["type"] == "RootCauseCandidate"
+        }
+        self.assertEqual(ids, {
+            "root_cause.cumulative_state_degradation",
+            "root_cause.discrete_process_change",
+            "root_cause.local_printing_state",
+        })
+
+    def test_layers_are_present(self) -> None:
         snapshot = ontology_snapshot()
         by_type: dict[str, int] = {}
         for item in snapshot["concepts"]:
@@ -58,15 +70,6 @@ class OntologyTest(unittest.TestCase):
         self.assertEqual(by_type["ProcessStage"], 4)
         self.assertGreaterEqual(by_type["EquipmentElement"], 7)
         self.assertEqual(by_type["FailureMechanism"], 13)
-
-    def test_v2_scopes_are_deprecated_but_still_mapped(self) -> None:
-        snapshot = ontology_snapshot()
-        for item in snapshot["concepts"]:
-            if item["type"] == "AbnormalScope":
-                self.assertTrue(
-                    (item.get("properties") or {}).get("deprecated"),
-                    item["id"],
-                )
 
     def test_mechanism_evidence_references_are_registered(self) -> None:
         snapshot = ontology_snapshot()
@@ -91,55 +94,29 @@ class OntologyTest(unittest.TestCase):
             for evidence_id in [*props["auto_checks"], *props["manual_checks"]]:
                 self.assertIn(evidence_id, evidence_ids, f"{item['id']} -> {evidence_id}")
 
-    def test_every_scope_label_used_by_analyses_is_registered(self) -> None:
-        # Drilldown categories.
-        for label in ("单Pad孤立异常", "同元件多Pad异常", "局部区域", "整板同向", "疑似SPI假异常"):
-            self.assertIn(label, SCOPE_TO_CONCEPT_ID, label)
-        # Realtime patterns.
-        for label in ("同点多板异常", "整板趋势异常", "单点偶发异常"):
-            self.assertIn(label, SCOPE_TO_CONCEPT_ID, label)
-        # Legacy alias resolves to the canonical concept.
-        self.assertEqual(
-            SCOPE_TO_CONCEPT_ID["同一元件多Pad异常"],
-            SCOPE_TO_CONCEPT_ID["同元件多Pad异常"],
-        )
-
-    def test_realtime_and_drilldown_same_pad_scopes_are_distinct(self) -> None:
-        # 严格连续（下钻触发）与跨板重复（实时）是不同判定口径，必须是
-        # 两个概念，不能共用一个标签。
-        self.assertNotEqual(
-            SCOPE_TO_CONCEPT_ID["连续3板同点异常"],
-            SCOPE_TO_CONCEPT_ID["同点多板异常"],
-        )
-
     def test_maps_labels_to_stable_ids(self) -> None:
-        # 机理 label 是权威根因词表,映射到机理概念。
-        ids = ontology_ids_for(
-            direction="多锡",
-            scope="单Pad孤立异常",
-            cause="钢网底部残锡转印",
-        )
+        # 机理 label 是权威根因词表,映射到机理概念;范围没有单独 ID,
+        # 权威表达是契约 scope 里的三轴概念 ID。
+        ids = ontology_ids_for(direction="多锡", cause="钢网底部残锡转印")
         self.assertEqual(ids["direction"], "defect.over_volume")
-        self.assertEqual(ids["scope"], "scope.single_pad_isolated")
         self.assertEqual(ids["cause"], "mech.understencil_residue")
+        self.assertNotIn("scope", ids)
 
-    def test_legacy_cause_labels_still_resolve(self) -> None:
-        # 旧记录里的 v3 措辞仍能解析到废弃的 RootCauseCandidate 概念。
+    def test_trend_attribution_labels_resolve(self) -> None:
+        ids = ontology_ids_for(cause="随生产累积的钢网或锡膏状态劣化")
+        self.assertEqual(ids["cause"], "root_cause.cumulative_state_degradation")
+
+    def test_legacy_v3_cause_labels_no_longer_resolve(self) -> None:
+        # v3 措辞词表已随 v5 删除,旧措辞不再映射(输出侧从 v4 起只发机理 label)。
         ids = ontology_ids_for(cause="钢网单孔底部残锡或开口异常")
-        self.assertEqual(ids["cause"], "root_cause.stencil_single_aperture_residue")
+        self.assertNotIn("cause", ids)
 
-    def test_spi_false_alarm_category_maps_to_scope_concept(self) -> None:
-        ids = ontology_ids_for(direction="多锡", scope="疑似SPI假异常")
-        self.assertEqual(ids["scope"], "scope.suspected_spi_false_alarm")
-
-    def test_mappings_are_generated_from_concepts(self) -> None:
+    def test_mappings_expose_direction_and_cause_only(self) -> None:
         snapshot = ontology_snapshot()
-        scope_map = snapshot["mappings"]["scope"]
-        scope_concepts = [item for item in snapshot["concepts"] if item["type"] == "AbnormalScope"]
-        for concept in scope_concepts:
-            self.assertEqual(scope_map[concept["label"]], concept["id"])
-            for alias in concept["aliases"]:
-                self.assertIn(alias, scope_map)
+        self.assertEqual(set(snapshot["mappings"].keys()), {"direction", "cause"})
+        for item in snapshot["concepts"]:
+            if item["type"] == "FailureMechanism":
+                self.assertEqual(snapshot["mappings"]["cause"][item["label"]], item["id"])
 
     def test_concept_ids_are_unique(self) -> None:
         ids = [concept.id for concept in CONCEPTS]
