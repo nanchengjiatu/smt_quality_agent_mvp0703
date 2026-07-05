@@ -31,11 +31,13 @@ Endpoints:
 import argparse
 import json
 import os
+import posixpath
 import threading
 import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 from smt_quality_agent.datasource import (
     masked_datasource,
@@ -270,7 +272,28 @@ class Handler(SimpleHTTPRequestHandler):
         if path.rstrip("/") == "/api/rules":
             self._send_json(rule_catalog())
             return
-        super().do_GET()
+        if self._static_allowed(path):
+            super().do_GET()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def do_HEAD(self) -> None:  # noqa: N802 - required name
+        if self._static_allowed(self.path.split("?", 1)[0]):
+            super().do_HEAD()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    @staticmethod
+    def _static_allowed(path: str) -> bool:
+        """Only the frontend and generated JSON may be served statically.
+
+        The project root also holds .git, raw production exports (*.xlsx), and
+        config/datasource.json with database credentials; the port is open to
+        the internet, so everything outside web/ and output/ stays private.
+        Normalize before checking so encoded ../ cannot escape the whitelist.
+        """
+        clean = posixpath.normpath(unquote(path))
+        return clean in ("/web", "/output") or clean.startswith(("/web/", "/output/"))
 
     def _status_report(self) -> dict:
         stages = []
