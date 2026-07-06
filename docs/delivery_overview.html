@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMT 锡膏印刷质量 Agent · 一页总览</title>
+<style>
+  :root {
+    --ink: #17202b; --muted: #5b6a7c; --line: #d8dfe8; --panel: #ffffff;
+    --bg: #f4f6f9; --accent: #2f6fed; --danger: #d92d20; --ok: #12805c; --warn: #b54708;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--ink); line-height: 1.6; padding: 28px 4vw 60px; }
+  .hero { border-bottom: 3px solid var(--ink); padding-bottom: 18px; margin-bottom: 26px; }
+  .hero h1 { font-size: 28px; letter-spacing: 1px; }
+  .hero p { color: var(--muted); margin-top: 8px; max-width: 62em; }
+  .hero .chips { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { font-size: 12px; border: 1px solid var(--line); background: var(--panel);
+          border-radius: 20px; padding: 3px 12px; color: var(--muted); }
+  h2 { font-size: 17px; margin: 30px 0 12px; padding-left: 10px; border-left: 4px solid var(--accent); }
+  .grid { display: grid; gap: 12px; }
+  .cols-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .cols-2 { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h3 { font-size: 14.5px; margin-bottom: 6px; }
+  .card p { font-size: 13px; color: var(--muted); }
+  .card .tag { float: right; font-size: 11px; color: var(--accent); border: 1px solid #c7d7f5;
+               border-radius: 10px; padding: 1px 8px; }
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+  .flow .node { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+                padding: 10px 12px; font-size: 13px; flex: 1; min-width: 150px; }
+  .flow .node strong { display: block; font-size: 13.5px; margin-bottom: 3px; }
+  .flow .node small { color: var(--muted); line-height: 1.45; display: block; }
+  .flow .arrow { align-self: center; color: var(--muted); font-size: 20px; }
+  .steps { counter-reset: step; }
+  .step { display: flex; gap: 14px; padding: 10px 0; }
+  .step::before { counter-increment: step; content: counter(step);
+                  flex: none; width: 30px; height: 30px; border-radius: 50%;
+                  background: var(--ink); color: #fff; font-weight: 700;
+                  display: flex; align-items: center; justify-content: center; }
+  .step strong { display: block; font-size: 14px; }
+  .step p { font-size: 13px; color: var(--muted); }
+  .formula { background: var(--panel); border: 1.5px solid #c7d7f5; border-radius: 10px;
+             padding: 14px 18px; font-size: 14px; margin-top: 10px; }
+  .formula code { background: #eef2f9; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  .formula .ex { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel); font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #eef2f7; white-space: nowrap; }
+  .warn-list li { margin: 6px 0; font-size: 13px; }
+  .warn-list strong { color: var(--warn); }
+  .foot { margin-top: 36px; padding-top: 14px; border-top: 1px solid var(--line);
+          color: var(--muted); font-size: 12px; }
+  .k { color: var(--accent); font-weight: 600; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .card, .flow .node, .formula, table { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>SMT 锡膏印刷质量 Agent</h1>
+  <p>盯着 SPI 数据流的质量分析 Agent——异常发生时自动下钻找根因、给处置建议；异常发生前用漂移监控提前预警；全部结论可审计、可追问。</p>
+  <div class="chips">
+    <span class="chip">零第三方依赖 · 一个 Python 进程即部署</span>
+    <span class="chip">约 7300 行 Python · 15 个模块 · 190 个单元测试</span>
+    <span class="chip">全量重算幂等 · 单快照一致性</span>
+    <span class="chip">结论均带证据与决策轨迹</span>
+  </div>
+</header>
+
+<h2>六大能力</h2>
+<div class="grid cols-3">
+  <div class="card"><span class="tag">事后</span><h3>实时异常与质量案例</h3><p>逐行判定 NG 类型 / 风险等级 / 异常模式，中高风险自动沉淀为质量案例并跟踪复测与关闭。</p></div>
+  <div class="card"><span class="tag">事前</span><h3>EWMA 漂移预警</h3><p>92 个焊盘 + 整板均值逐板监控，越限分 L1/L2/L3 三级，只有高危才打扰人；健康矩阵一屏看清谁在变坏。</p></div>
+  <div class="card"><span class="tag">深度</span><h3>三板连发下钻</h3><p>同一焊盘连续 ≥3 板 NG 自动触发完整根因分析：范围 / 趋势 / 恢复 / 签名 / 参数核查 → 候选前 3 + 处置分级。</p></div>
+  <div class="card"><span class="tag">全局</span><h3>事件与根因分析</h3><p>NG 板聚类成事件、前兆回溯（渐变型/突发型）、参数排除法、工艺维度体检（清洗周期 / 停机首板 / 印刷方向）。</p></div>
+  <div class="card"><span class="tag">知识</span><h3>失效机理手册</h3><p>13 个失效机理是全系统根因说法的唯一来源——每张卡：什么现象 → 怎么确认 → 确认后怎么办。改一处，处处生效。</p></div>
+  <div class="card"><span class="tag">对话</span><h3>可追问的结论</h3><p>下钻对话基于本次触发的分析契约与机理目录回答；LLM 可选六家提供商，未配置或失败自动回退离线规则问答。</p></div>
+</div>
+
+<h2>数据怎么流</h2>
+<div class="flow">
+  <div class="node"><strong>PostgreSQL</strong><small>full_excel 系生产实时写入表，每行 = 一板一焊盘一次 SPI 测量</small></div>
+  <span class="arrow">→</span>
+  <div class="node"><strong>Watcher</strong><small>每 5 秒查表指纹（行数＋最新时间戳），变化才触发重算</small></div>
+  <span class="arrow">→</span>
+  <div class="node"><strong>滑动窗口快照</strong><small>最近 3000 块板一次读取；窗口重算与全量逐字节一致（已验证）</small></div>
+  <span class="arrow">→</span>
+  <div class="node"><strong>四条分析流水线</strong><small>实时异常 / 事件根因 / 下钻 / 预警共享同一快照，故障互相隔离</small></div>
+  <span class="arrow">→</span>
+  <div class="node"><strong>浏览器</strong><small>轮询数据版本号，变了才拉取；新触发 / 新预警 / 新异常分级提示</small></div>
+</div>
+
+<h2>一次真实的三板连发是怎么处理的（TRG-d1489186，多锡）</h2>
+<div class="steps">
+  <div class="step"><div><strong>触发：C1754_2 在 10:30 / 10:33 / 10:36 连续 3 块生产板判多锡</strong><p>严格口径：中间无 PASS、复测不计入；触发 ID 由起始板身份哈希派生，重算不变。</p></div></div>
+  <div class="step"><div><strong>观测层把事实算清楚（只描述，不解释）</strong><p>范围＝单Pad孤立异常（兄弟焊盘与整板上下文均干净）；趋势＝突变型（触发前基线稳定 31.5%）；触发后第 1 块板即恢复，恢复前有 xbackward/xforward 设定变更（记录在案）。</p></div></div>
+  <div class="step"><div><strong>决策四步：真伪 → 嫌疑 → 把握 → 处置</strong><p>NG 为真 → 提名残锡转印（先验 0.7）/ 参数漂移（0.85）/ 离散变化（0.6）→ 残锡转印签名吻合 ×1.2、单Pad 典型 ×1.1 = <span class="k">0.924 高</span>；参数漂移范围不典型 ×0.9 = 0.765 → 处置 P2 按首要根因现场确认。</p></div></div>
+  <div class="step"><div><strong>到人眼前：结论、动作、审计链、对话</strong><p>处置动作直接来自机理卡（清洁钢网底面并复测下一块板，核对擦网周期）；诊断轨迹记录每条规则命中/未命中与算式；对话区可继续追问。</p></div></div>
+</div>
+
+<div class="formula">
+  <strong>把握度算式（数值来自知识库常量单源，页面自动跟随）</strong><br>
+  最终把握 = 初始把握 × 症状对不对得上 <code>吻合 ×1.2 / 相反 ×0.7</code> × 位置典不典型 <code>×1.1 / ×0.9</code> × 与擦网周期合不合拍 <code>×1.15</code> × 基线是否借自其他机种 <code>×0.8</code>，封顶 0.95；分档 ≥0.75 高 / ≥0.5 中。
+  <div class="ex">真实例：0.7 × 1.2(签名匹配) × 1.1(范围典型) = 0.924 → 高</div>
+</div>
+
+<h2>知识分层：说错了怪谁</h2>
+<table>
+  <tr><th>层</th><th>回答什么</th><th>内容</th><th>出错怎么修</th></tr>
+  <tr><td><strong>观测层</strong></td><td>数据里发生了什么</td><td>空间×时间×有效性三轴（11 取值）＋ 25 种证据</td><td>描述与实际不符＝计算 bug → <strong>改代码</strong></td></tr>
+  <tr><td><strong>机理层</strong></td><td>为什么会这样</td><td>13 个失效机理（先验 / 签名 / 典型范围 / 动作）</td><td>说法不符产线经验＝知识错 → <strong>改机理卡</strong></td></tr>
+  <tr><td><strong>决策层</strong></td><td>怎么判、怎么办</td><td>决策四步 ＋ 置信度算式 ＋ 处置阶梯 P1–P3</td><td>太松太紧＝策略问题 → <strong>调阈值与顺序</strong></td></tr>
+</table>
+
+<h2>交付边界（如实告知）</h2>
+<ul class="warn-list">
+  <li><strong>标定范围</strong>：全部阈值与先验标定自单机种、单机台、37 天数据；换机种需用内置回测工具重标定。</li>
+  <li><strong>机理内容</strong>：13 个机理为领域先验，须经产线工艺专家逐条评审后方可作为处置依据（评审前作参考）。</li>
+  <li><strong>数据侧待接入</strong>：SPI 判定阈值（接入后漂移裕度升级为真 Cpk）、PrintDirection / 擦网时刻 / 温湿度（接入后对应机理自动证据点亮）。</li>
+  <li><strong>LLM 对话</strong>：启用即有数据出厂（触发上下文发往所选大模型服务商），需数据治理拍板；不启用则纯离线运行。</li>
+  <li><strong>安全边界</strong>：服务无认证，定位为工厂内网工具，依赖网络隔离。</li>
+</ul>
+
+<h2>建议试点方式</h2>
+<div class="grid cols-2">
+  <div class="card"><h3>影子模式 2–4 周</h3><p>工程师照旧按现有流程处理质量问题，同时用本系统做参考，记录"系统说的和实际查出来的对不对得上"。</p></div>
+  <div class="card"><h3>看两个数字再转正</h3><p>根因建议命中率、预警有效率——试点期数据说话；期间积累的确认/否决反馈即是校准知识库的第一批原料。</p></div>
+</div>
+
+<p class="foot">详版见《交付讲解手册》（docs/delivery_handover.md / .pdf）：架构与数据流、五个数据口径、四条流水线详解、API 与配置参考、代码结构导览、测试体系、修改与扩展指南、30 分钟演示动线、术语表。</p>
+
+</body>
+</html>
