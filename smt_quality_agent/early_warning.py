@@ -509,22 +509,45 @@ def build_early_warning_report(
     lam: float = EWMA_LAMBDA,
     limit_l: float = EWMA_LIMIT_L,
     baseline_boards: int = BASELINE_BOARDS,
+    accepted_ids: frozenset[str] | set[str] = frozenset(),
 ) -> dict[str, Any]:
     """The early_warning stage's output contract (design §4).
 
     ``warnings`` carries every episode (page alerts are the active L3 subset,
     flagged via ``page_alert``); ``pad_health`` is the all-pads matrix the
-    frontend colours by margin.
+    frontend colours by margin. ``accepted_ids`` are warning ids the engineer
+    accepted as a new baseline: monitoring for that pad restarts at the
+    accepted episode's first board, so the shifted level becomes the new
+    normal instead of an eternal alarm. Ids are deterministic, so acceptance
+    survives window slides and recomputes.
     """
-    played = replay(rows, lam, limit_l, baseline_boards)
+    series = pad_points(rows)
+    series.update(board_points(rows))
     floors = causal_ng_floors(rows)
     ng_floor = floors[-1][1] if floors else None
 
     warnings = []
     pad_health = []
-    for (model, pad_name), item in sorted(played["series"].items()):
-        points = item["points"]
-        result = item["result"]
+    accepted_count = 0
+    for (model, pad_name) in sorted(series):
+        points = series[(model, pad_name)]
+        result = monitor_pad(
+            model, pad_name, points, lam, limit_l, baseline_boards, floors,
+        )
+        baseline_accepted = False
+        # Each acceptance can reveal a newer shift, so allow a few rounds.
+        for _ in range(5):
+            active = next(
+                (e for e in result["episodes"] if e["end_index"] is None), None,
+            )
+            if active is None or active["warning_id"] not in accepted_ids:
+                break
+            points = points[active["start_index"]:]
+            result = monitor_pad(
+                model, pad_name, points, lam, limit_l, baseline_boards, floors,
+            )
+            baseline_accepted = True
+            accepted_count += 1
         is_board = pad_name == BOARD_PAD
         spatial_id = "spatial.board_wide" if is_board else "spatial.single_pad"
         component, pad = ("", "") if is_board else split_component_pad(pad_name)
@@ -552,6 +575,7 @@ def build_early_warning_report(
             "ng_count": sum(1 for point in points if point["is_ng"]),
             "level": active["level"] if active else 0,
             "episode_active": active is not None,
+            "baseline_accepted": baseline_accepted,
             "margin": margin,
             "avdp": {
                 "ewma": round(avdp_final["ewma"], 2) if avdp_final["armed"] else None,
@@ -612,6 +636,7 @@ def build_early_warning_report(
             "active_episodes": sum(1 for w in warnings if w["status"] == "active"),
             "page_alerts": sum(1 for w in warnings if w["page_alert"]),
             "pending_new_baseline": sum(1 for w in warnings if w["pending_new_baseline"]),
+            "accepted_baselines": accepted_count,
         },
         "warnings": warnings,
         "pad_health": pad_health,

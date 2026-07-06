@@ -252,6 +252,27 @@ class ReportContractTest(unittest.TestCase):
         self.assertFalse(stale["page_alert"])
         self.assertGreaterEqual(report["summary"]["pending_new_baseline"], 1)
 
+        # Accepting the shift as the new baseline restarts monitoring at the
+        # shifted level: the eternal alarm disappears and the pad re-arms
+        # around the new normal.
+        accepted = build_early_warning_report(
+            rows, accepted_ids={stale["warning_id"]},
+        )
+        # The single-pad fixture makes the board-mean series identical to the
+        # pad series; its own (unaccepted) pending episode remains — only the
+        # accepted pad's must be gone.
+        self.assertFalse([
+            w for w in accepted["warnings"]
+            if w["pad_name"] == "C1_1" and w["pending_new_baseline"]
+        ])
+        self.assertEqual(accepted["summary"]["accepted_baselines"], 1)
+        health = next(
+            item for item in accepted["pad_health"] if item["pad_name"] == "C1_1"
+        )
+        self.assertTrue(health["baseline_accepted"])
+        self.assertFalse(health["episode_active"])
+        self.assertAlmostEqual(health["avdp"]["mu"], 30.0, delta=1.0)
+
     def test_stable_data_reports_empty_but_honest(self) -> None:
         rows = []
         for index, value in enumerate(stable(120)):

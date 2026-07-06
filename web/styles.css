@@ -140,6 +140,153 @@ main {
   gap: 12px;
 }
 
+/* ---------- 事前预警（P0） ---------- */
+
+.ew-section {
+  margin-bottom: 20px;
+}
+
+.ew-section h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.ew-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.ew-card.ew-alert {
+  border-left: 4px solid var(--danger);
+}
+
+.ew-card.ew-pending {
+  border-left: 4px solid var(--warning);
+}
+
+.ew-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.ew-card-head .secondary-button {
+  margin-left: 10px;
+}
+
+.ew-spark {
+  width: 100%;
+  height: 110px;
+  display: block;
+  background: color-mix(in srgb, var(--panel) 88%, var(--line));
+  border-radius: 6px;
+}
+
+.ew-spark .ew-raw {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.ew-spark .ew-ewma {
+  fill: none;
+  stroke: #2f6fed;
+  stroke-width: 2;
+}
+
+.ew-spark .ew-limit {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 1.4;
+  stroke-dasharray: 6 4;
+}
+
+.ew-spark .ew-ng-dot {
+  fill: var(--danger);
+}
+
+.ew-legend {
+  margin: 4px 0 0;
+}
+
+.ew-mechanisms {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.ew-mechanisms li strong {
+  margin-right: 8px;
+}
+
+.ew-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(102px, 1fr));
+  gap: 6px;
+}
+
+.ew-matrix-board {
+  grid-template-columns: minmax(102px, 220px);
+  margin-bottom: 6px;
+}
+
+.ew-tile {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  position: relative;
+}
+
+.ew-tile span {
+  display: block;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ew-tile strong {
+  font-size: 15px;
+}
+
+.ew-tile em {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.ew-tile.ew-danger {
+  border-color: #fecdca;
+  background: color-mix(in srgb, var(--panel) 88%, #f04438);
+}
+
+.ew-tile.ew-warn {
+  border-color: #fedf89;
+  background: color-mix(in srgb, var(--panel) 90%, #f79009);
+}
+
+.ew-tile.ew-muted {
+  opacity: 0.65;
+}
+
+.ew-tile.ew-active {
+  outline: 2px solid var(--danger);
+  outline-offset: -1px;
+}
+
 .metrics-footnote {
   display: flex;
   flex-wrap: wrap;

@@ -164,6 +164,20 @@ def write_json(path: Path, payload: object) -> None:
         file.write("\n")
 
 
+WARNING_ACKS_PATH = OUTPUT_DIR / "warning_acks.json"
+
+
+def load_warning_acks() -> set[str]:
+    """Warning ids the engineer accepted as new baselines (serve.py appends)."""
+    try:
+        with WARNING_ACKS_PATH.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, ValueError):
+        return set()
+    accepted = payload.get("accepted") or {}
+    return set(accepted.keys() if isinstance(accepted, dict) else accepted)
+
+
 def _stage(name: str, work: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """Run one stage, capturing timing and any failure into a status dict."""
     start = time.perf_counter()
@@ -259,6 +273,7 @@ def run_pipeline(database: str | None = None, window_boards: int | None = None) 
         params = datasource_for(database)["early_warning"]
         write_json(OUTPUT_DIR / "early_warning.json", build_early_warning_report(
             full_rows, source_table, lam=params["lambda"], limit_l=params["L"],
+            accepted_ids=load_warning_acks(),
         ))
         return {"rows": len(full_rows), "files": list(STAGE_FILES["early_warning"])}
 

@@ -50,6 +50,7 @@ from smt_quality_agent.ontology import ontology_snapshot
 from smt_quality_agent.pipeline import (
     OUTPUT_DIR,
     STAGE_FILES,
+    WARNING_ACKS_PATH,
     run_pipeline,
     source_fingerprint,
 )
@@ -133,6 +134,23 @@ def run_and_record(database: str | None, window_boards: int | None = None) -> di
         _persist_state_locked()
         report = {**report, "version": _live["version"]}
     return report
+
+
+def record_warning_ack(warning_id: str) -> None:
+    """Append one accepted-baseline id to output/warning_acks.json."""
+    try:
+        with WARNING_ACKS_PATH.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, ValueError):
+        payload = {}
+    accepted = payload.get("accepted")
+    if not isinstance(accepted, dict):
+        accepted = {key: "" for key in (accepted or [])}
+    accepted[warning_id] = _now()
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    with WARNING_ACKS_PATH.open("w", encoding="utf-8") as file:
+        json.dump({"accepted": accepted}, file, ensure_ascii=False, indent=2)
+        file.write("\n")
 
 
 def load_drilldown_trigger(trigger_id: str) -> dict:
@@ -235,6 +253,24 @@ class Handler(SimpleHTTPRequestHandler):
                     {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
                     HTTPStatus.BAD_REQUEST,
                 )
+            return
+        if path == "/api/warning/accept-baseline":
+            # Engineer accepted a step-shifted level as the pad's new normal:
+            # persist the deterministic warning id, then recompute so the
+            # early_warning stage restarts that pad's baseline from the shift.
+            try:
+                payload = self._read_json()
+                accepted_id = str(payload.get("warning_id") or "").strip()
+                if not accepted_id.startswith("WRN-"):
+                    raise ValueError(f"invalid warning_id: {accepted_id!r}")
+                record_warning_ack(accepted_id)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            self._send_json(run_and_record(DATABASE_OVERRIDE))
             return
         if path == "/api/drilldown/chat":
             try:

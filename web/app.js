@@ -5,6 +5,7 @@ const DATA_PATHS = {
   top: "../output/dashboard_top.json",
   analysis: "../output/param_analysis.json",
   drilldown: "../output/drilldown.json",
+  warning: "../output/early_warning.json",
 };
 
 const API_REFRESH = "/api/refresh";
@@ -37,6 +38,9 @@ const state = {
   // Deterministic drilldown trigger ids from the previous load; a new id on an
   // auto-update means a fresh three-board run fired and deserves a callout.
   prevTriggerIds: new Set(),
+  // Page-alert warning ids from the previous load, for the L3 drift toast.
+  prevAlertIds: new Set(),
+  warning: null,
   // Keys flagged as new on the last auto-update, flashed once then cleared.
   newAbnormalKeys: new Set(),
 };
@@ -75,7 +79,7 @@ function setActiveView(viewName) {
 function initialView() {
   const params = new URLSearchParams(window.location.search);
   const view = params.get("view") || window.location.hash.replace(/^#/, "");
-  return ["abnormal", "cases", "dashboard", "events", "rules"].includes(view) ? view : "abnormal";
+  return ["abnormal", "warning", "cases", "dashboard", "events", "rules"].includes(view) ? view : "abnormal";
 }
 
 // Re-run the analysis pipeline on the server, then reload the generated JSON.
@@ -112,7 +116,7 @@ async function loadData(meta) {
     dataStatus.textContent = "加载数据中...";
   }
   try {
-    const [abnormals, cases, summary, top, analysis, drilldown, rules, ontology] = await Promise.all([
+    const [abnormals, cases, summary, top, analysis, drilldown, rules, ontology, warning] = await Promise.all([
       fetchJson(DATA_PATHS.abnormals),
       fetchJson(DATA_PATHS.cases),
       fetchJson(DATA_PATHS.summary),
@@ -121,6 +125,7 @@ async function loadData(meta) {
       fetchJson(DATA_PATHS.drilldown).catch(() => null),
       fetchJson(API_RULES).catch(() => null),
       fetchJson(API_ONTOLOGY).catch(() => null),
+      fetchJson(DATA_PATHS.warning).catch(() => null),
     ]);
 
     // Work out deltas and newly-added abnormals before overwriting state.
@@ -132,10 +137,17 @@ async function loadData(meta) {
     const newTriggers = (meta && meta.auto)
       ? triggerIds.filter((id) => !state.prevTriggerIds.has(id))
       : [];
+    const alertIds = ((warning || {}).warnings || [])
+      .filter((item) => item.page_alert)
+      .map((item) => item.warning_id);
+    const newAlerts = (meta && meta.auto)
+      ? alertIds.filter((id) => !state.prevAlertIds.has(id))
+      : [];
     state.prevSummary = state.summary || {};
     state.newAbnormalKeys = new Set(newlyAdded.map(abnormalKey));
     state.prevAbnormalKeys = new Set(abnormals.map(abnormalKey));
     state.prevTriggerIds = new Set(triggerIds);
+    state.prevAlertIds = new Set(alertIds);
 
     state.abnormals = abnormals;
     state.cases = cases;
@@ -145,12 +157,15 @@ async function loadData(meta) {
     state.drilldown = drilldown;
     state.rules = rules;
     state.ontology = ontology;
+    state.warning = warning;
     dataStatus.textContent = composeStatus(meta, abnormals, cases);
     render();
 
     if (meta && meta.auto) {
       if (newTriggers.length) {
         showToast(`🔴 检测到 ${newTriggers.length} 个新三板连发触发，请进入下钻分析`);
+      } else if (newAlerts.length) {
+        showToast(`⚠️ ${newAlerts.length} 条新漂移预警（L3），请查看事前预警页`);
       } else {
         showToast(newlyAdded.length ? `检测到 ${newlyAdded.length} 条新异常` : "数据已更新");
       }
@@ -254,6 +269,8 @@ function render() {
   renderMetrics();
   if (state.activeView === "abnormal") {
     renderAbnormalView();
+  } else if (state.activeView === "warning") {
+    renderWarningView();
   } else if (state.activeView === "cases") {
     renderCaseView();
   } else if (state.activeView === "events") {
@@ -281,6 +298,18 @@ function renderMetrics() {
       { label: "处置规则", value: rules.filter((item) => item.rule_type === "disposition").length },
       { label: "目录版本", value: catalog.version || "-" },
       { label: "来源", value: "knowledge_base" },
+    ];
+  } else if (state.activeView === "warning") {
+    const report = state.warning || {};
+    const ewSummary = report.summary || {};
+    const params = report.params || {};
+    metrics = [
+      { label: "监控 Pad 数", value: ewSummary.pads_monitored },
+      { label: "页面告警", value: ewSummary.page_alerts ?? 0, tone: "danger" },
+      { label: "待确认新常态", value: ewSummary.pending_new_baseline ?? 0, tone: "warn" },
+      { label: "活动 episode", value: ewSummary.active_episodes ?? 0 },
+      { label: "NG 观测下界", value: report.ng_floor_avdp != null ? `${report.ng_floor_avdp}%` : "-" },
+      { label: "EWMA 参数", value: params.lambda != null ? `λ${params.lambda} / L${params.L}` : "-" },
     ];
   } else if (state.activeView === "events") {
     const overview = (state.analysis || {}).data_overview || {};
@@ -672,6 +701,184 @@ function renderCaseRow(item) {
       <td>${escapeHtml(item.status)}</td>
     </tr>
   `;
+}
+
+// ------- 事前预警（P0）：漂移告警卡 + 待确认新常态 + Pad 健康矩阵 -------
+
+function renderWarningView() {
+  const report = state.warning;
+  if (!report) {
+    const error = stageError("early_warning");
+    viewRoot.innerHTML = `<div class="empty">${error ? escapeHtml(error) : "事前预警数据尚未生成，请刷新数据。"}</div>`;
+    return;
+  }
+  const warnings = report.warnings || [];
+  const alerts = warnings.filter((item) => item.page_alert);
+  const pending = warnings.filter((item) => item.pending_new_baseline);
+  const recoveredCount = warnings.filter((item) => item.status === "recovered").length;
+
+  const alertBlock = alerts.length
+    ? alerts.map((item) => renderWarningCard(item, false)).join("")
+    : `<div class="empty">当前无漂移预警——${(report.summary || {}).pads_monitored ?? 0} 个 Pad 的 EWMA 均在控制限内。</div>`;
+
+  const pendingBlock = pending.length
+    ? pending.map((item) => renderWarningCard(item, true)).join("")
+    : `<div class="empty">没有待确认的台阶式新常态。</div>`;
+
+  viewRoot.innerHTML = `
+    <section class="ew-section">
+      <h3>漂移预警（活动 L3，越限即将成不良）</h3>
+      ${alertBlock}
+    </section>
+    <section class="ew-section">
+      <h3>待确认新常态（越限持续超 100 板的台阶迁移）</h3>
+      <p class="details">这些 Pad 的偏差水位整体抬升后不再回落。确认现场无工艺问题后可"接受为新基线"，监控将以抬升后的水平重新建基线。</p>
+      ${pendingBlock}
+    </section>
+    <section class="ew-section">
+      <h3>Pad 健康矩阵（按漂移裕度着色，margin = 距 NG 观测水位的 3σ 倍数）</h3>
+      ${renderHealthMatrix(report)}
+    </section>
+    <p class="details">已恢复 episode ${recoveredCount} 条 · ${(report.caveats || []).map((text) => escapeHtml(text)).join(" ")}</p>
+  `;
+
+  viewRoot.querySelectorAll("[data-accept-baseline]").forEach((button) => {
+    button.addEventListener("click", () => acceptBaseline(button.dataset.acceptBaseline, button));
+  });
+}
+
+function renderWarningCard(item, pendingMode) {
+  const title = item.is_board_series ? "整板均值" : item.pad_name;
+  const mechanisms = (item.mechanism_candidates || []).map((candidate) => `
+    <li>
+      <strong>${escapeHtml(candidate.cause)}</strong>
+      <span class="details">${escapeHtml(candidate.early_warning)} · ${escapeHtml(candidate.action)}</span>
+    </li>
+  `).join("");
+  const acceptButton = pendingMode
+    ? `<button class="secondary-button" data-accept-baseline="${escapeHtml(item.warning_id)}">接受为新基线</button>`
+    : "";
+  return `
+    <article class="ew-card ${pendingMode ? "ew-pending" : "ew-alert"}">
+      <header class="ew-card-head">
+        <div>
+          <strong title="${escapeHtml(item.warning_id)}">${escapeHtml(title)}</strong>
+          <span class="badge risk-${item.level >= 3 ? "高" : "中"}">L${item.level}</span>
+          <span class="details">${escapeHtml(item.model)} · 越限指标 ${(item.metrics || []).map((m) => escapeHtml(m.replace("comp_", ""))).join("/")}</span>
+        </div>
+        <div class="details">
+          自 ${escapeHtml(item.start_time)} 起 · 已越限 ${item.boards_above} 板
+          ${item.margin != null ? ` · margin ${formatNumber(item.margin)}` : ""}
+          ${acceptButton}
+        </div>
+      </header>
+      ${renderWarningSparkline(item.series || [])}
+      <ul class="ew-mechanisms">${mechanisms}</ul>
+    </article>
+  `;
+}
+
+function renderWarningSparkline(series) {
+  if (!series.length) {
+    return "";
+  }
+  const width = 640;
+  const height = 110;
+  const pad = 6;
+  const values = [];
+  series.forEach((point) => {
+    [point.value, point.ewma, point.limit].forEach((value) => {
+      if (value != null) {
+        values.push(value);
+      }
+    });
+  });
+  if (!values.length) {
+    return "";
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const x = (index) => pad + (index / Math.max(series.length - 1, 1)) * (width - 2 * pad);
+  const y = (value) => height - pad - ((value - min) / span) * (height - 2 * pad);
+  const line = (field) => series
+    .map((point, index) => point[field] == null ? null : `${x(index).toFixed(1)},${y(point[field]).toFixed(1)}`)
+    .filter(Boolean)
+    .join(" ");
+  const ngDots = series
+    .map((point, index) => point.is_ng
+      ? `<circle cx="${x(index).toFixed(1)}" cy="${y(point.value ?? min).toFixed(1)}" r="3.5" class="ew-ng-dot"/>`
+      : "")
+    .join("");
+  return `
+    <svg class="ew-spark" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="EWMA 漂移曲线">
+      <polyline class="ew-raw" points="${line("value")}"/>
+      <polyline class="ew-limit" points="${line("limit")}"/>
+      <polyline class="ew-ewma" points="${line("ewma")}"/>
+      ${ngDots}
+    </svg>
+    <p class="details ew-legend">灰=逐板实测 · 蓝=EWMA · 红虚线=控制限 · 红点=NG</p>
+  `;
+}
+
+function renderHealthMatrix(report) {
+  const pads = (report.pad_health || []).filter((item) => !item.is_board_series);
+  const board = (report.pad_health || []).find((item) => item.is_board_series);
+  const sorted = [...pads].sort((a, b) => (a.margin ?? Infinity) - (b.margin ?? Infinity));
+  const tile = (item, label) => {
+    let tone = "ok";
+    if (item.episode_active || (item.margin != null && item.margin < 0)) {
+      tone = "danger";
+    } else if (item.margin != null && item.margin < 0.5) {
+      tone = "warn";
+    } else if (item.margin == null) {
+      tone = "muted";
+    }
+    return `
+      <div class="ew-tile ew-${tone}${item.episode_active ? " ew-active" : ""}"
+           title="EWMA ${item.avdp?.ewma ?? "-"} / 基线 ${item.avdp?.mu ?? "-"} / 限 ${item.avdp?.limit ?? "-"}${item.baseline_accepted ? " · 已接受新基线" : ""}">
+        <span>${escapeHtml(label || item.pad_name)}</span>
+        <strong>${item.margin != null ? formatNumber(item.margin) : "-"}</strong>
+        ${item.level ? `<em>L${item.level}</em>` : ""}
+      </div>
+    `;
+  };
+  return `
+    ${board ? `<div class="ew-matrix ew-matrix-board">${tile(board, "整板均值")}</div>` : ""}
+    <div class="ew-matrix">${sorted.map((item) => tile(item)).join("")}</div>
+  `;
+}
+
+async function acceptBaseline(warningId, button) {
+  if (!window.confirm("确认将该 Pad 当前抬升后的水平接受为新基线？监控将重新建基线，此操作会立即触发一轮重算。")) {
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "重算中...";
+  try {
+    const response = await fetch("/api/warning/accept-baseline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ warning_id: warningId }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const report = await response.json();
+    state.stageStatus = {};
+    (report.stages || []).forEach((stage) => {
+      state.stageStatus[stage.stage] = stage;
+    });
+    await loadData(report);
+    if (report.version) {
+      state.liveVersion = report.version;
+    }
+    showToast("已接受为新基线，监控已按新水平重建");
+  } catch (error) {
+    showToast(`接受新基线失败：${error.message}`);
+    button.disabled = false;
+    button.textContent = "接受为新基线";
+  }
 }
 
 function renderDashboardView() {
