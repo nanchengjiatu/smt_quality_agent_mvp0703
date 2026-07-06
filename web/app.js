@@ -41,6 +41,9 @@ const state = {
   // Page-alert warning ids from the previous load, for the L3 drift toast.
   prevAlertIds: new Set(),
   warning: null,
+  // The knowledge page defaults to the mechanism handbook; the maintenance
+  // view (axes/graph/pipeline) opens on demand and survives re-renders.
+  maintViewOpen: false,
   // Keys flagged as new on the last auto-update, flashed once then cleared.
   newAbnormalKeys: new Set(),
 };
@@ -1235,6 +1238,12 @@ function renderDrilldownDecisionCard(trigger) {
 }
 
 viewRoot.addEventListener("click", (event) => {
+  const maintToggle = event.target.closest("[data-maint-toggle]");
+  if (maintToggle) {
+    state.maintViewOpen = !state.maintViewOpen;
+    render();
+    return;
+  }
   const ontoNode = event.target.closest("[data-node]");
   if (ontoNode) {
     const id = ontoNode.dataset.node;
@@ -1532,105 +1541,133 @@ function renderRulesView() {
   const countOf = (type) => concepts.filter((item) => item.type === type).length;
   const entityCount = countOf("ProcessStage") + countOf("EquipmentElement") + countOf("Material");
 
+  // 手册分组：按方向组织，兜底机理单列——读者按"我看到多锡/少锡"入手。
+  const groupDefs = [
+    ["多锡", "多锡方向", "锡量偏多：残锡转印、塌陷、擦网周期类"],
+    ["少锡", "少锡方向", "锡量偏少：堵孔、脱模、供锡类"],
+    ["双向", "双向（视具体情形偏多或偏少）", "密合、流变、参数、对位、误判类"],
+    ["兜底", "兜底", "证据不足时的保守归因"],
+  ];
+  const grouped = new Map(groupDefs.map(([key]) => [key, []]));
+  mechanismCards.forEach((card) => {
+    const key = card.mech.mechanism_id === "mech.undetermined"
+      ? "兜底"
+      : (grouped.has(card.mech.direction) ? card.mech.direction : "双向");
+    grouped.get(key).push(card);
+  });
+
   viewRoot.innerHTML = `
     <section class="rules-view">
       <div class="rules-head">
         <div>
-          <h2>本体/知识库</h2>
-          <p class="details">${escapeHtml(((state.ontology || {}).version) || "")} · ${escapeHtml(catalog.version || "")}
-            · 分层依据:三类知识的来源、置信度与变化节奏不同,各自单源维护</p>
+          <h2>失效机理手册</h2>
+          <p class="details">根因词表的唯一权威——诊断、预警、对话给出的根因都出自这 ${(catalog.mechanisms || []).length} 个机理。
+            每张卡回答：什么现象 → 怎么确认 → 确认后怎么办。
+            ${escapeHtml(((state.ontology || {}).version) || "")} · ${escapeHtml(catalog.version || "")}</p>
         </div>
         <div class="rules-count">${shownCount} / ${rules.length}</div>
       </div>
 
-      <div class="layer-guide">
-        <a class="layer-card" href="#layer-observation">
-          <span class="layer-name">观测层</span>
-          <strong>数据里看到了什么？</strong>
-          <span class="details">纯计算事实,不含解释。三个正交判定轴(${axes.length} 个取值)+ ${countOf("EvidenceType")} 种证据。错了改算法。</span>
-        </a>
-        <a class="layer-card" href="#layer-mechanism">
-          <span class="layer-name">机理层</span>
-          <strong>为什么会这样？</strong>
-          <span class="details">锡膏印刷工艺知识,先验随产线数据校准。${countOf("FailureMechanism")} 个失效机理,根因词表的唯一权威。错了改知识。</span>
-        </a>
-        <a class="layer-card" href="#layer-decision">
-          <span class="layer-name">决策层</span>
-          <strong>该怎么判、怎么办？</strong>
-          <span class="details">工厂策略,现场可调。决策管道 ${decisionRules.length} 条 + 处置阶梯 ${dispositionRules.length} 级。错了调阈值/顺序。</span>
-        </a>
-        <span class="layer-card layer-card-pending">
-          <span class="layer-name">实体层</span>
-          <strong>落在哪个物理对象上？</strong>
-          <span class="details">${entityCount} 个阶段/部位/物料骨架,现为机理的部位标注(全景图左两列);台账化待 MES 数据接入。</span>
-        </span>
-      </div>
-
-      <section class="panel" id="layer-observation">
-        <h2>① 观测层 · 三个正交判定轴
-          <span class="details">任何一次触发的"范围"都表达为三轴各取一值的组合;证据按机理挂载,见 ③ 机理卡片</span>
-        </h2>
-        <div class="onto-axes">
-          ${["SpatialExtent", "TemporalPattern", "DataValidity"].map((type) => `
-            <span class="onto-axis-group">
-              <em>${escapeHtml(CONCEPT_TYPE_LABELS[type])}</em>
-              ${axes.filter((item) => item.type === type).map((item) => `
-                <span class="check-chip" title="${escapeHtml(item.description || "")}">${escapeHtml(item.label)}</span>
-              `).join("")}
-            </span>
-          `).join("")}
-        </div>
-      </section>
-
-      <section class="panel" id="layer-mechanism">
-        <h2>② 机理层 · 关系全景
-          <span class="details">工序阶段/部位 ← 失效机理 → 证据 · 点击节点联动高亮</span>
-        </h2>
-        <div class="onto-layout">
-          <div class="onto-graph-wrap">
-            ${state.ontology ? renderOntologyGraph(graph, state.ontologyNode) : `<div class="empty">本体数据加载失败，请确认 /api/ontology 可访问。</div>`}
-          </div>
-          <aside class="onto-detail" id="ontoDetail">
-            ${renderOntologyDetail(graph, state.ontologyNode)}
-          </aside>
-        </div>
-      </section>
-
-      <section class="panel">
-        <h2>③ 机理层 · 机理目录 <span class="details">${(catalog.mechanisms || []).length} 个失效机理(根因词表唯一权威) · 证据与绑定规则挂在各机理卡下</span></h2>
-        <div class="mech-list">
-          ${mechanismCards.map(renderMechanismCard).join("")}
-          ${unboundRules.length ? `
-            <article class="mech-card">
-              <div class="mech-head">
-                <div>
-                  <strong>形态归因(不绑定机理)</strong>
-                  <span class="details">趋势形态只是证据,不足以锁定物理机理</span>
-                </div>
-              </div>
-              ${unboundRules.map(renderRuleEntry).join("")}
-            </article>` : ""}
-        </div>
-      </section>
-
-      <section class="panel" id="layer-decision">
-        <h2>④ 决策层 · 诊断决策管道 <span class="details">观测输入自左向右流经各段;每段内 order 越小越先求值</span></h2>
-        ${renderDecisionPipeline(decisionRules)}
-      </section>
-
-      <section class="panel">
-        <h2>⑤ 决策层 · 处置阶梯 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
-        <div class="ladder">
-          ${dispositionRules.map((rule) => `
-            <div class="ladder-step">
-              <span class="ladder-order priority-${escapeHtml(rule.priority || "")}">${escapeHtml(rule.priority || "")}</span>
-              <div>
-                <strong>${escapeHtml((rule.output || {}).disposition || "")}</strong>
-                <div class="details">${escapeHtml((rule.output || {}).reason || "")}</div>
-              </div>
+      ${groupDefs.map(([key, title, note]) => {
+        const cards = grouped.get(key) || [];
+        if (!cards.length) {
+          return "";
+        }
+        return `
+          <section class="panel mech-group">
+            <h2>${escapeHtml(title)} <span class="details">${cards.length} 个 · ${escapeHtml(note)}</span></h2>
+            <div class="mech-list">
+              ${cards.map(renderMechanismCard).join("")}
             </div>
-          `).join("") || `<div class="empty">没有匹配的处置策略</div>`}
-        </div>
+          </section>
+        `;
+      }).join("")}
+
+      ${unboundRules.length ? `
+        <section class="panel">
+          <h2>形态归因（不绑定机理）<span class="details">趋势形态只是证据，不足以锁定物理机理</span></h2>
+          ${unboundRules.map(renderRuleEntry).join("")}
+        </section>` : ""}
+
+      <section class="panel maint-panel">
+        <button class="maint-toggle" data-maint-toggle>
+          ${state.maintViewOpen ? "▾" : "▸"} 维护视图
+          <span class="details">改知识库的人看：观测三轴词表 · 机理关系全景 · 诊断决策管道 · 处置阶梯 · 分层原则</span>
+        </button>
+        ${state.maintViewOpen ? `
+          <div class="layer-guide">
+            <span class="layer-card">
+              <span class="layer-name">观测层</span>
+              <strong>数据里看到了什么？</strong>
+              <span class="details">纯计算事实,不含解释。三个正交判定轴(${axes.length} 个取值)+ ${countOf("EvidenceType")} 种证据。错了改算法。</span>
+            </span>
+            <span class="layer-card">
+              <span class="layer-name">机理层</span>
+              <strong>为什么会这样？</strong>
+              <span class="details">锡膏印刷工艺知识,先验随产线数据校准。${countOf("FailureMechanism")} 个失效机理,根因词表的唯一权威。错了改知识(上方手册)。</span>
+            </span>
+            <span class="layer-card">
+              <span class="layer-name">决策层</span>
+              <strong>该怎么判、怎么办？</strong>
+              <span class="details">工厂策略,现场可调。决策管道 ${decisionRules.length} 条 + 处置阶梯 ${dispositionRules.length} 级。错了调阈值/顺序。</span>
+            </span>
+            <span class="layer-card layer-card-pending">
+              <span class="layer-name">实体层</span>
+              <strong>落在哪个物理对象上？</strong>
+              <span class="details">${entityCount} 个阶段/部位/物料骨架,现为机理的部位标注(全景图左两列);台账化待 MES 数据接入。</span>
+            </span>
+          </div>
+
+          <section class="panel" id="layer-observation">
+            <h2>观测层 · 三个正交判定轴
+              <span class="details">任何一次触发的"范围"都表达为三轴各取一值的组合;证据按机理挂载,见上方机理卡</span>
+            </h2>
+            <div class="onto-axes">
+              ${["SpatialExtent", "TemporalPattern", "DataValidity"].map((type) => `
+                <span class="onto-axis-group">
+                  <em>${escapeHtml(CONCEPT_TYPE_LABELS[type])}</em>
+                  ${axes.filter((item) => item.type === type).map((item) => `
+                    <span class="check-chip" title="${escapeHtml(item.description || "")}">${escapeHtml(item.label)}</span>
+                  `).join("")}
+                </span>
+              `).join("")}
+            </div>
+          </section>
+
+          <section class="panel" id="layer-mechanism">
+            <h2>机理层 · 关系全景
+              <span class="details">工序阶段/部位 ← 失效机理 → 证据 · 点击节点联动高亮</span>
+            </h2>
+            <div class="onto-layout">
+              <div class="onto-graph-wrap">
+                ${state.ontology ? renderOntologyGraph(graph, state.ontologyNode) : `<div class="empty">本体数据加载失败，请确认 /api/ontology 可访问。</div>`}
+              </div>
+              <aside class="onto-detail" id="ontoDetail">
+                ${renderOntologyDetail(graph, state.ontologyNode)}
+              </aside>
+            </div>
+          </section>
+
+          <section class="panel" id="layer-decision">
+            <h2>决策层 · 诊断决策管道 <span class="details">观测输入自左向右流经各段;每段内 order 越小越先求值</span></h2>
+            ${renderDecisionPipeline(decisionRules)}
+          </section>
+
+          <section class="panel">
+            <h2>决策层 · 处置阶梯 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
+            <div class="ladder">
+              ${dispositionRules.map((rule) => `
+                <div class="ladder-step">
+                  <span class="ladder-order priority-${escapeHtml(rule.priority || "")}">${escapeHtml(rule.priority || "")}</span>
+                  <div>
+                    <strong>${escapeHtml((rule.output || {}).disposition || "")}</strong>
+                    <div class="details">${escapeHtml((rule.output || {}).reason || "")}</div>
+                  </div>
+                </div>
+              `).join("") || `<div class="empty">没有匹配的处置策略</div>`}
+            </div>
+          </section>
+        ` : ""}
       </section>
     </section>
   `;
@@ -1701,26 +1738,43 @@ function renderCheckChips(mech) {
 }
 
 function renderMechanismCard({ mech, rules: list }) {
+  const facts = [
+    ["部位", `${mech.element || "-"} · ${mech.stage || "-"}`],
+    ["起病", ONSET_LABELS[mech.onset] || mech.onset || "-"],
+    ["签名", mech.signature_text || "无固定签名"],
+    ["典型范围", (mech.typical_spatial_labels || []).join(" / ") || "-"],
+    ["时间形态", (mech.typical_temporal_labels || []).join(" / ") || "-"],
+  ];
   return `
     <article class="mech-card" id="mech-${escapeHtml(mech.mechanism_id)}">
       <div class="mech-head">
         <div>
           <strong>${escapeHtml(mech.label)}</strong>
           ${mech.direction ? `<span class="${defectClass(mech.direction)}">${escapeHtml(mech.direction)}</span>` : ""}
-          <span class="details">
-            ${escapeHtml(mech.element)} · ${escapeHtml(mech.stage)}
-            · 起病：${escapeHtml(ONSET_LABELS[mech.onset] || mech.onset || "-")}
-            ${mech.signature_text ? ` · 签名：${escapeHtml(mech.signature_text)}` : ""}
-          </span>
         </div>
         ${mech.early_warning ? `<span class="mech-warning">${escapeHtml(mech.early_warning)}</span>` : ""}
       </div>
-      <p class="details">${escapeHtml(mech.description)}</p>
-      ${mech.action ? `<p class="details">规范动作：${escapeHtml(mech.action)}</p>` : ""}
-      ${renderCheckChips(mech)}
-      ${list.length
-        ? list.map(renderRuleEntry).join("")
-        : `<div class="details mech-empty">暂无绑定规则（该机理的自动判别在第二阶段接入）</div>`}
+      <p class="mech-desc">${escapeHtml(mech.description)}</p>
+      <div class="mech-facts">
+        ${facts.map(([label, value]) => `
+          <span class="mech-fact"><em>${escapeHtml(label)}</em>${escapeHtml(value)}</span>
+        `).join("")}
+      </div>
+      <div class="mech-block">
+        <span class="mech-block-title">怎么确认</span>
+        ${renderCheckChips(mech)}
+      </div>
+      ${mech.action ? `
+        <div class="mech-block">
+          <span class="mech-block-title">确认后怎么办</span>
+          <p class="mech-action">${escapeHtml(mech.action)}</p>
+        </div>` : ""}
+      <details class="mech-rules">
+        <summary>${list.length ? `绑定规则 ${list.length} 条` : "暂无绑定规则"} · ${escapeHtml(mech.mechanism_id)}</summary>
+        ${list.length
+          ? list.map(renderRuleEntry).join("")
+          : `<div class="details mech-empty">该机理暂无自动判别规则；事件/实时候选由方向×范围投影生成。</div>`}
+      </details>
     </article>
   `;
 }

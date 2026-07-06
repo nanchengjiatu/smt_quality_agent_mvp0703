@@ -1313,6 +1313,14 @@ def mechanism_catalog() -> list[dict[str, Any]]:
             "direction": props.get("direction", ""),
             "onset": props.get("onset", ""),
             "signature_text": props.get("signature_text") or "",
+            "typical_spatial_labels": [
+                concept_label(spatial_id)
+                for spatial_id in props.get("typical_spatial", [])
+            ],
+            "typical_temporal_labels": [
+                concept_label(temporal_id)
+                for temporal_id in props.get("typical_temporal", [])
+            ],
             "early_warning": props.get("early_warning") or "",
             "action": props.get("action") or "",
             "auto_checks": [

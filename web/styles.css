@@ -140,6 +140,88 @@ main {
   gap: 12px;
 }
 
+/* ---------- 机理手册（知识页改版） ---------- */
+
+.mech-desc {
+  margin: 6px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.mech-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0;
+}
+
+.mech-fact {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.mech-fact em {
+  font-style: normal;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.mech-block {
+  margin: 8px 0 0;
+}
+
+.mech-block-title {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.mech-action {
+  margin: 0;
+  font-size: 13px;
+}
+
+.mech-rules {
+  margin-top: 8px;
+  border-top: 1px dashed var(--line);
+  padding-top: 6px;
+}
+
+.mech-rules summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.maint-panel {
+  border-style: dashed;
+}
+
+.maint-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.maint-panel .layer-guide {
+  margin-top: 12px;
+}
+
+.maint-panel > .panel {
+  margin-top: 12px;
+  border-style: solid;
+}
+
 /* ---------- LLM 对话（P2） ---------- */
 
 .dd-chat-source {

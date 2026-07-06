@@ -428,6 +428,14 @@ class RuleCatalogTest(unittest.TestCase):
         self.assertTrue(any(
             check["availability"] == "not_collected" for check in clogging["auto_checks"]
         ))
+        # 机理手册卡需要人话的典型范围/时间形态标签（不是 spatial.* id）。
+        self.assertIn("单Pad", "".join(clogging["typical_spatial_labels"]))
+        self.assertTrue(clogging["typical_temporal_labels"])
+        self.assertTrue(all(
+            not label.startswith("spatial.")
+            for item in catalog["mechanisms"]
+            for label in item["typical_spatial_labels"]
+        ))
 
     def test_scope_rules_are_written_as_review_cards(self) -> None:
         catalog = rule_catalog()
