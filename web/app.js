@@ -547,10 +547,21 @@ async function openLlmDialog() {
         <button class="modal-close" data-llm-close aria-label="关闭">×</button>
       </div>
       <form id="llmForm" class="datasource-form" data-key-set="${config.key_set ? "1" : "0"}">
-        <label class="llm-enable">
-          启用 LLM 问答
-          <input name="enabled" type="checkbox" ${config.enabled ? "checked" : ""}>
-        </label>
+        <div class="llm-mode">
+          <span class="llm-mode-title">回答模式</span>
+          <div class="llm-mode-options" id="llmModeOptions">
+            <label class="llm-mode-option${config.enabled ? "" : " selected"}">
+              <input type="radio" name="enabled" value="0" ${config.enabled ? "" : "checked"}>
+              <strong>离线规则问答</strong>
+              <small>不调用任何外部接口，基于本次触发的分析契约作答</small>
+            </label>
+            <label class="llm-mode-option${config.enabled ? " selected" : ""}">
+              <input type="radio" name="enabled" value="1" ${config.enabled ? "checked" : ""}>
+              <strong>LLM 大模型回答</strong>
+              <small>由下方所选提供商回答，调用失败自动回退离线规则</small>
+            </label>
+          </div>
+        </div>
         <label>
           提供商
           <select name="provider" id="llmProvider">
@@ -593,6 +604,13 @@ async function openLlmDialog() {
       overlay.remove();
     }
   });
+  overlay.querySelectorAll('#llmModeOptions input[type="radio"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      overlay.querySelectorAll(".llm-mode-option").forEach((option) => {
+        option.classList.toggle("selected", option.querySelector("input").checked);
+      });
+    });
+  });
   overlay.querySelector("#llmProvider").addEventListener("change", (event) => {
     const info = providers[event.target.value] || {};
     overlay.querySelector("#llmModel").value = info.default_model || "";
@@ -608,7 +626,7 @@ function llmPayloadFromForm() {
   const data = new FormData(form);
   const key = String(data.get("api_key") || "");
   return {
-    enabled: form.querySelector('[name="enabled"]').checked,
+    enabled: String(data.get("enabled")) === "1",
     provider: String(data.get("provider") || ""),
     api_key: key || (form.dataset.keySet === "1" ? "******" : ""),
     model: String(data.get("model") || "").trim(),

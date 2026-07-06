@@ -10,6 +10,10 @@ const drilldownState = {
   compareTab: "siblings",
   chatMessages: [],
   chatLoading: false,
+  // Set when a chat exchange changed the message list, so the next render
+  // scrolls the chat box to the newest bubble (and only then — metric or tab
+  // switches must not yank the user's scroll position).
+  chatScrollPending: false,
 };
 
 const DD_CHAT_API = "/api/drilldown/chat";
@@ -462,6 +466,14 @@ function renderDrilldown() {
 
   renderRunChart();
   renderCompareBody();
+
+  if (drilldownState.chatScrollPending) {
+    const chatBox = document.getElementById("ddChatMessages");
+    if (chatBox) {
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+    drilldownState.chatScrollPending = false;
+  }
 }
 
 async function askDrilldownQuestion(question) {
@@ -472,6 +484,7 @@ async function askDrilldownQuestion(question) {
   }
   drilldownState.chatMessages.push({ role: "user", text });
   drilldownState.chatLoading = true;
+  drilldownState.chatScrollPending = true;
   renderDrilldown();
   try {
     const response = await fetch(DD_CHAT_API, {
@@ -499,6 +512,7 @@ async function askDrilldownQuestion(question) {
     });
   } finally {
     drilldownState.chatLoading = false;
+    drilldownState.chatScrollPending = true;
     renderDrilldown();
   }
 }
