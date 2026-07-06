@@ -1598,23 +1598,23 @@ function renderRulesView() {
           <div class="layer-guide">
             <span class="layer-card">
               <span class="layer-name">观测层</span>
-              <strong>数据里看到了什么？</strong>
-              <span class="details">纯计算事实,不含解释。三个正交判定轴(${axes.length} 个取值)+ ${countOf("EvidenceType")} 种证据。错了改算法。</span>
+              <strong>数据里发生了什么？</strong>
+              <span class="details">系统对数据的客观描述：异常在哪（空间）、怎么出现（时间）、是不是真的（有效性），三轴共 ${axes.length} 个取值，外加 ${countOf("EvidenceType")} 种有名字的证据。这里的描述与实际不符＝计算逻辑的 bug，改代码，不动知识。</span>
             </span>
             <span class="layer-card">
               <span class="layer-name">机理层</span>
               <strong>为什么会这样？</strong>
-              <span class="details">锡膏印刷工艺知识,先验随产线数据校准。${countOf("FailureMechanism")} 个失效机理,根因词表的唯一权威。错了改知识(上方手册)。</span>
+              <span class="details">锡膏印刷的工艺知识：${countOf("FailureMechanism")} 个失效机理解释观测到的现象，是全系统根因说法的唯一来源。说法不符合产线实际＝知识错了，改上方机理卡的内容。</span>
             </span>
             <span class="layer-card">
               <span class="layer-name">决策层</span>
               <strong>该怎么判、怎么办？</strong>
-              <span class="details">工厂策略,现场可调。决策管道 ${decisionRules.length} 条 + 处置阶梯 ${dispositionRules.length} 级。错了调阈值/顺序。</span>
+              <span class="details">工厂自己的策略：多少置信度算高、先查什么、什么情况升级处置。决策管道 ${decisionRules.length} 条＋处置阶梯 ${dispositionRules.length} 级。觉得太松或太紧＝策略问题，调阈值和顺序，知识与代码都不用动。</span>
             </span>
             <span class="layer-card layer-card-pending">
               <span class="layer-name">实体层</span>
               <strong>落在哪个物理对象上？</strong>
-              <span class="details">${entityCount} 个阶段/部位/物料骨架,现为机理的部位标注(全景图左两列);台账化待 MES 数据接入。</span>
+              <span class="details">${entityCount} 个工序阶段/设备部位/物料的骨架，目前只作机理卡上的部位标注（全景图左两列）；设备台账化要等 MES 数据接入。</span>
             </span>
           </div>
 
