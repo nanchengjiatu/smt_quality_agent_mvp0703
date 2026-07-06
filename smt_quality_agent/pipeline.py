@@ -33,7 +33,6 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "output"
 
 DEFAULT_DATABASE = "l780db"
-FULL_EXCEL_TABLE = "full_excel0623"
 
 # Files each stage owns, used by the server's /api/status to report freshness.
 STAGE_FILES: dict[str, tuple[str, ...]] = {
@@ -103,20 +102,45 @@ def fingerprint_query(config: dict[str, Any]) -> str:
     return f"select count(*) || '|' || coalesce(max({fdate_ts_expr(config)})::text, '') from {table};"
 
 
+def cumulative_stats_query(config: dict[str, Any]) -> str:
+    """Whole-table aggregates backing the dashboard's true-cumulative numbers.
+
+    NG mirrors ``param_correlation.is_ng``: a non-empty defect name other than
+    the literal PASS. Aggregate-only (no detail rows), so it stays cheap even
+    when the table has grown far past the realtime window.
+    """
+    table = qualified_table(config)
+    board = quote_identifier(config["fields"]["board"])
+    defect = quote_identifier(config["fields"]["defect"])
+    is_ng_sql = (
+        f"nullif(trim({defect}), '') is not null "
+        f"and upper(trim({defect})) <> 'PASS'"
+    )
+    return f"""
+select json_build_object(
+    'row_count', count(*),
+    'board_count', count(distinct {board}),
+    'ng_row_count', count(*) filter (where {is_ng_sql}),
+    'ng_board_count', count(distinct {board}) filter (where {is_ng_sql}),
+    'first_time', coalesce(min({fdate_ts_expr(config)})::text, ''),
+    'latest_time', coalesce(max({fdate_ts_expr(config)})::text, '')
+) from {table};
+"""
+
+
+def load_cumulative_stats(database: str | None = None) -> dict[str, Any]:
+    config = datasource_for(database)
+    completed = run_psql(config, cumulative_stats_query(config), timeout=10)
+    return json.loads(completed.stdout)
+
+
 def _psql_json(query: str, database: str | None = None) -> list[dict[str, Any]]:
     config = datasource_for(database)
     completed = run_psql(config, query)
     return json.loads(completed.stdout)
 
 
-def load_over_volume_rows(database: str | None = None) -> list[dict[str, Any]]:
-    """Compatibility loader: all views now consume the same full SPI table."""
-    config = datasource_for(database)
-    rows = _psql_json(full_excel_query(config), config["database"])
-    return [{key.lower(): value for key, value in row.items()} for row in rows]
-
-
-def over_volume_fingerprint(database: str | None = None) -> str:
+def source_fingerprint(database: str | None = None) -> str:
     """Return a cheap signature of the active full SPI table."""
     config = datasource_for(database)
     completed = run_psql(config, fingerprint_query(config), timeout=5)
@@ -158,56 +182,6 @@ def _stage(name: str, work: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     return status
 
 
-def run_over_volume_stage(database: str | None = None) -> dict[str, Any]:
-    def work() -> dict[str, Any]:
-        full_rows = load_over_volume_rows(database)
-        production_rows = first_inspection_rows(full_rows)
-        rows = normalize_spi_rows(production_rows)
-        results = run_agent(rows, infer_total_pad_counts(rows))
-        quality_cases = build_quality_cases(results)
-        write_json(OUTPUT_DIR / "abnormal_results.json", results)
-        write_json(OUTPUT_DIR / "quality_cases.json", quality_cases)
-        write_json(OUTPUT_DIR / "dashboard_summary.json", build_dashboard_summary(results, quality_cases))
-        write_json(OUTPUT_DIR / "dashboard_top.json", build_dashboard_top(results, quality_cases))
-        return {
-            "rows": len(rows),
-            "source_rows": len(full_rows),
-            "files": list(STAGE_FILES["anomaly_cases"]),
-        }
-
-    return _stage("anomaly_cases", work)
-
-
-def run_full_excel_stages(database: str | None = None) -> list[dict[str, Any]]:
-    """Load the big full_excel table once, feed both param + drilldown stages.
-
-    If the shared load fails, both downstream stages are reported as failed with
-    the same error rather than querying the table twice.
-    """
-    try:
-        rows = load_full_excel_rows(database)
-    except Exception as exc:  # noqa: BLE001
-        error = f"{type(exc).__name__}: {exc}"
-        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-            error = f"psql: {exc.stderr.strip().splitlines()[-1]}"
-        return [
-            {"stage": "param_analysis", "ok": False, "ms": 0, "error": error},
-            {"stage": "drilldown", "ok": False, "ms": 0, "error": error},
-        ]
-
-    def param_work() -> dict[str, Any]:
-        source_table = source_table_label(datasource_for(database))
-        write_json(OUTPUT_DIR / "param_analysis.json", build_param_analysis(rows, source_table))
-        return {"rows": len(rows), "files": list(STAGE_FILES["param_analysis"])}
-
-    def drilldown_work() -> dict[str, Any]:
-        source_table = source_table_label(datasource_for(database))
-        write_json(OUTPUT_DIR / "drilldown.json", build_drilldown_report(rows, source_table))
-        return {"rows": len(rows), "files": list(STAGE_FILES["drilldown"])}
-
-    return [_stage("param_analysis", param_work), _stage("drilldown", drilldown_work)]
-
-
 def run_pipeline(database: str | None = None, window_boards: int | None = None) -> dict[str, Any]:
     """Run all views from one snapshot of the most recent boards.
 
@@ -240,13 +214,30 @@ def run_pipeline(database: str | None = None, window_boards: int | None = None) 
     production_rows = first_inspection_rows(full_rows)
     normalized_rows = normalize_spi_rows(production_rows)
     source_table = source_table_label(datasource_for(database))
+    board_field = load_datasource()["fields"]["board"].lower()
+    loaded_boards = len({row.get(board_field) for row in full_rows})
+
+    # Whole-table cumulative numbers ride along as a secondary reading; the
+    # primary dashboard numbers stay window-scoped. Best-effort: a failure here
+    # must not take down the analysis stages.
+    try:
+        cumulative = load_cumulative_stats(database)
+    except Exception:  # noqa: BLE001
+        cumulative = None
 
     def anomaly_work() -> dict[str, Any]:
         results = run_agent(normalized_rows, infer_total_pad_counts(normalized_rows))
         quality_cases = build_quality_cases(results)
+        summary = build_dashboard_summary(results, quality_cases)
+        summary["scope"] = {
+            "window_boards": window_boards,
+            "loaded_boards": loaded_boards,
+            "source_table": source_table,
+        }
+        summary["cumulative"] = cumulative
         write_json(OUTPUT_DIR / "abnormal_results.json", results)
         write_json(OUTPUT_DIR / "quality_cases.json", quality_cases)
-        write_json(OUTPUT_DIR / "dashboard_summary.json", build_dashboard_summary(results, quality_cases))
+        write_json(OUTPUT_DIR / "dashboard_summary.json", summary)
         write_json(OUTPUT_DIR / "dashboard_top.json", build_dashboard_top(results, quality_cases))
         return {
             "rows": len(normalized_rows),
@@ -267,11 +258,10 @@ def run_pipeline(database: str | None = None, window_boards: int | None = None) 
         _stage("param_analysis", param_work),
         _stage("drilldown", drilldown_work),
     ]
-    board_field = load_datasource()["fields"]["board"]
     return {
         "ok": all(stage["ok"] for stage in stages),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "window_boards": window_boards,
-        "loaded_boards": len({row.get(board_field.lower()) for row in full_rows}),
+        "loaded_boards": loaded_boards,
         "stages": stages,
     }

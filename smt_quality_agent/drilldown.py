@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -1127,7 +1128,14 @@ def build_trigger_package(
     rows_by_inspection_pad: dict[tuple[str, str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     start_idx, end_idx = run
-    trigger_id = f"TRG{trigger_no:03d}"
+    # The id must survive window slides and recomputes so frontend read/ack
+    # state can follow a trigger; it is derived from the run's stable identity
+    # (its first board), not from the enumeration order of this run.
+    start_point = points[start_idx]
+    identity = "|".join((
+        model, pad_name, str(start_point["board_sn"]), str(start_point["time"]),
+    ))
+    trigger_id = "TRG-" + hashlib.sha1(identity.encode("utf-8")).hexdigest()[:8]
     component, pad = split_component_pad(pad_name)
     main_defect = main_defect_of_run(points, start_idx, end_idx)
     main_defect_key = normalize_defect_key(main_defect)
@@ -1284,6 +1292,7 @@ def build_trigger_package(
 
     return {
         "trigger_id": trigger_id,
+        "trigger_no": trigger_no,
         "agent_type": "consecutive_pad_root_cause",
         "model": model,
         "machine": str(rows[0].get("machinename") or "") if rows else "",

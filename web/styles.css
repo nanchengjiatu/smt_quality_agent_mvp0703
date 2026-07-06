@@ -140,6 +140,19 @@ main {
   gap: 12px;
 }
 
+.metrics-footnote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.metrics-footnote:empty {
+  display: none;
+}
+
 .metric {
   background: var(--panel);
   border: 1px solid var(--line);

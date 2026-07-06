@@ -50,8 +50,8 @@ from smt_quality_agent.ontology import ontology_snapshot
 from smt_quality_agent.pipeline import (
     OUTPUT_DIR,
     STAGE_FILES,
-    over_volume_fingerprint,
     run_pipeline,
+    source_fingerprint,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -120,7 +120,7 @@ def run_and_record(database: str | None, window_boards: int | None = None) -> di
     with _pipeline_lock:
         report = run_pipeline(database, window_boards)
         try:
-            fingerprint = over_volume_fingerprint(database)
+            fingerprint = source_fingerprint(database)
         except Exception:  # noqa: BLE001 - fingerprint is best-effort here
             fingerprint = None
     with _state_lock:
@@ -161,7 +161,7 @@ class Watcher(threading.Thread):
             _live["watching"] = True
         while not self._stop.is_set():
             try:
-                fingerprint = over_volume_fingerprint(self.database)
+                fingerprint = source_fingerprint(self.database)
                 with _state_lock:
                     _live["last_check"] = _now()
                     _live["last_error"] = None

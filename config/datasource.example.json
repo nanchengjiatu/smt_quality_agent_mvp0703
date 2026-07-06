@@ -6,8 +6,7 @@
   "user": "",
   "password": "",
   "tables": {
-    "full_spi": "full_excel0623",
-    "ng_events": "over_volume"
+    "full_spi": "full_excel0623"
   },
   "fields": {
     "time": "fdate",

@@ -2,7 +2,11 @@ import unittest
 
 from smt_quality_agent.datasource import normalize_datasource
 from smt_quality_agent.param_correlation import parse_fdate
-from smt_quality_agent.pipeline import fingerprint_query, full_excel_query
+from smt_quality_agent.pipeline import (
+    cumulative_stats_query,
+    fingerprint_query,
+    full_excel_query,
+)
 
 
 class FdateOrderingTest(unittest.TestCase):
@@ -32,6 +36,28 @@ class WindowQueryTest(unittest.TestCase):
         self.assertIn('"barcode"', query)
         self.assertIn("to_timestamp", query)
         self.assertIn("desc nulls last", query)
+
+
+class CumulativeStatsQueryTest(unittest.TestCase):
+    """真累计走全表聚合（只算计数不拉明细），NG 口径与 is_ng 一致。"""
+
+    def test_query_aggregates_whole_table(self) -> None:
+        query = cumulative_stats_query(normalize_datasource({}))
+        self.assertIn("count(*)", query)
+        self.assertIn('count(distinct "barcode")', query)
+        self.assertNotIn("limit", query)
+        self.assertNotIn("row_to_json", query)
+
+    def test_ng_matches_is_ng_semantics(self) -> None:
+        # 非空且 upper != 'PASS'，与 param_correlation.is_ng 相同。
+        query = cumulative_stats_query(normalize_datasource({}))
+        self.assertIn("nullif(trim(\"comp_errname\"), '') is not null", query)
+        self.assertIn("upper(trim(\"comp_errname\")) <> 'PASS'", query)
+
+    def test_time_range_parses_fdate(self) -> None:
+        query = cumulative_stats_query(normalize_datasource({}))
+        self.assertIn("to_timestamp", query)
+        self.assertNotIn('max("fdate")', query)
 
 
 class WindowConfigTest(unittest.TestCase):

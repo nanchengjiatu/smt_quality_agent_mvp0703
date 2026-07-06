@@ -5,7 +5,7 @@ from typing import Any
 from smt_quality_agent.affected_model import split_component_pad
 
 
-# Printing parameters stored in l780db.public.over_volume as
+# Printing parameters stored in the full SPI table (full_excel family) as
 # <name>_plan / <name> / diff_<name> triples, kept for cause correlation.
 PARAM_TRIPLES = (
     "printspeed",

@@ -20,9 +20,10 @@ DEFAULT_DATASOURCE: dict[str, Any] = {
     "database": "l780db",
     "user": "",
     "password": "",
+    # The production line writes into the full SPI table (full_excel family,
+    # confirmed 2026-07-06); every view is driven by this single table.
     "tables": {
         "full_spi": "full_excel0623",
-        "ng_events": "over_volume",
     },
     "fields": {
         "time": "fdate",
@@ -65,7 +66,8 @@ def normalize_datasource(payload: dict[str, Any]) -> dict[str, Any]:
     config["user"] = str(config.get("user") or "").strip()
     config["password"] = str(config.get("password") or "")
     config["tables"]["full_spi"] = str(config["tables"].get("full_spi") or "full_excel0623").strip()
-    config["tables"]["ng_events"] = str(config["tables"].get("ng_events") or "over_volume").strip()
+    # Dropped legacy key: the NG-only over_volume table is no longer a source.
+    config["tables"].pop("ng_events", None)
     config["fields"]["time"] = str(config["fields"].get("time") or "fdate").strip()
     try:
         config["realtime_window_boards"] = max(0, int(config.get("realtime_window_boards")))

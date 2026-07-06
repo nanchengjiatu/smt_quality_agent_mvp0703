@@ -28,12 +28,15 @@ const state = {
   // Lets each view show an honest "load failed" message instead of a blank.
   stageStatus: {},
   // Last data version seen from /api/live; a higher one means the server
-  // re-ran the pipeline (new over_volume data) so we reload automatically.
+  // re-ran the pipeline (new SPI data) so we reload automatically.
   liveVersion: 0,
   // Summary from the previous load, for showing metric deltas (▲/▼).
   prevSummary: {},
   // Keys of abnormals seen on the previous load, to detect newly-added rows.
   prevAbnormalKeys: new Set(),
+  // Deterministic drilldown trigger ids from the previous load; a new id on an
+  // auto-update means a fresh three-board run fired and deserves a callout.
+  prevTriggerIds: new Set(),
   // Keys flagged as new on the last auto-update, flashed once then cleared.
   newAbnormalKeys: new Set(),
 };
@@ -125,9 +128,14 @@ async function loadData(meta) {
     const newlyAdded = (meta && meta.auto)
       ? abnormals.filter((item) => !prevKeys.has(abnormalKey(item)))
       : [];
+    const triggerIds = ((drilldown || {}).triggers || []).map((item) => item.trigger_id);
+    const newTriggers = (meta && meta.auto)
+      ? triggerIds.filter((id) => !state.prevTriggerIds.has(id))
+      : [];
     state.prevSummary = state.summary || {};
     state.newAbnormalKeys = new Set(newlyAdded.map(abnormalKey));
     state.prevAbnormalKeys = new Set(abnormals.map(abnormalKey));
+    state.prevTriggerIds = new Set(triggerIds);
 
     state.abnormals = abnormals;
     state.cases = cases;
@@ -141,7 +149,11 @@ async function loadData(meta) {
     render();
 
     if (meta && meta.auto) {
-      showToast(newlyAdded.length ? `检测到 ${newlyAdded.length} 条新异常` : "数据已更新");
+      if (newTriggers.length) {
+        showToast(`🔴 检测到 ${newTriggers.length} 个新三板连发触发，请进入下钻分析`);
+      } else {
+        showToast(newlyAdded.length ? `检测到 ${newlyAdded.length} 条新异常` : "数据已更新");
+      }
     }
   } catch (error) {
     dataStatus.textContent = "数据加载失败，请先运行 python3 serve.py";
@@ -161,7 +173,7 @@ function composeStatus(meta, abnormals, cases) {
   return text;
 }
 
-// Poll the server's data version; reload automatically when over_volume data
+// Poll the server's data version; reload automatically when the SPI table
 // has changed (the watcher re-ran the pipeline and bumped the version).
 async function pollLive() {
   try {
@@ -320,6 +332,37 @@ function renderMetrics() {
       </article>
     `;
   }).join("");
+  renderMetricsFootnote();
+}
+
+// Secondary reading line under the metric tiles: the primary numbers are
+// window-scoped, so the sliding-window scope (only once data has actually
+// outgrown the window) and the whole-table cumulative ride along here.
+function renderMetricsFootnote() {
+  const footnote = document.getElementById("metricsFootnote");
+  if (!footnote) {
+    return;
+  }
+  const summary = state.summary || {};
+  if (!["abnormal", "cases", "dashboard"].includes(state.activeView)) {
+    footnote.innerHTML = "";
+    return;
+  }
+  const parts = [];
+  const scope = summary.scope || {};
+  if (scope.window_boards > 0 && scope.loaded_boards >= scope.window_boards) {
+    parts.push(`统计口径：最近 ${scope.loaded_boards} 块板（滑动窗口，更早的板已滚出实时视图）`);
+  }
+  const cumulative = summary.cumulative;
+  if (cumulative && cumulative.row_count != null) {
+    let text = `数据源累计：${cumulative.board_count} 块板 · ${cumulative.row_count} 条记录 · `
+      + `NG ${cumulative.ng_row_count} 条 / ${cumulative.ng_board_count} 板`;
+    if (cumulative.first_time && cumulative.latest_time) {
+      text += `（${cumulative.first_time} ~ ${cumulative.latest_time}）`;
+    }
+    parts.push(text);
+  }
+  footnote.innerHTML = parts.map((text) => `<span>${escapeHtml(text)}</span>`).join("");
 }
 
 // Small ▲/▼ change indicator vs the previous load; neutral colour because the
@@ -363,7 +406,7 @@ async function openDatasourceDialog() {
       database: "l780db",
       user: "",
       password: "",
-      tables: { full_spi: "full_excel0623", ng_events: "over_volume" },
+      tables: { full_spi: "full_excel0623" },
       fields: { time: "fdate" },
       refresh_interval_seconds: 30,
     };
@@ -412,12 +455,8 @@ async function openDatasourceDialog() {
           <input name="password" type="password" value="" placeholder="${config.password_set ? "留空表示不修改已保存密码" : "可选"}" autocomplete="current-password">
         </label>
         <label>
-          SPI 明细表
+          SPI 明细表（生产实时写入表）
           <input name="full_spi" required value="${escapeHtml(((config.tables || {}).full_spi) || "full_excel0623")}">
-        </label>
-        <label>
-          NG/异常表
-          <input name="ng_events" value="${escapeHtml(((config.tables || {}).ng_events) || "over_volume")}">
         </label>
         <label>
           时间字段
@@ -469,7 +508,6 @@ function datasourcePayloadFromForm() {
     password: password || (form.dataset.passwordSet === "1" ? "******" : ""),
     tables: {
       full_spi: String(data.get("full_spi") || "").trim(),
-      ng_events: String(data.get("ng_events") || "").trim(),
     },
     fields: {
       time: String(data.get("time") || "").trim(),
@@ -768,7 +806,7 @@ function renderDrilldownDecisionCard(trigger) {
       </div>
       <div class="decision-main">
         <div class="decision-title">
-          <strong>${escapeHtml(trigger.trigger_id)} · ${escapeHtml(trigger.pad_name)}</strong>
+          <strong title="${escapeHtml(trigger.trigger_id)}">触发 #${escapeHtml(trigger.trigger_no || "")} · ${escapeHtml(trigger.pad_name)}</strong>
           <span class="${defectClass(trigger.main_defect_cn)}">${escapeHtml(trigger.main_defect_cn)}</span>
           <span class="badge">${escapeHtml(contractScope.category || "待判定")}</span>
           <span class="badge dd-badge">连续 ${escapeHtml(trigger.trigger_board_count)} 板</span>

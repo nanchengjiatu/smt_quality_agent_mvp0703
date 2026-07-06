@@ -164,7 +164,7 @@ python3 run_demo.py
 ```
 
 This writes `output/sample_*.json` variants so it does not overwrite the
-`over_volume` results.
+database-driven results.
 
 ## View The Page
 

@@ -517,6 +517,23 @@ class ReportShapeTest(unittest.TestCase):
         first = trigger["findings"][0]
         self.assertEqual(first["highlight"], [0, 2])
 
+    def test_trigger_id_is_deterministic_across_window_slides(self) -> None:
+        # 窗口滚动丢掉旧板重算后，同一触发的 id 必须不变，
+        # 前端的已读/确认状态才能跨重算延续。
+        rows = make_boards(trigger_specs(10, 3, 5))
+        full_report = build_drilldown_report(rows)
+        dropped_barcodes = {f"B{index:03d}" for index in range(4)}
+        slid_report = build_drilldown_report(
+            [row for row in rows if row["barcode"] not in dropped_barcodes],
+        )
+        self.assertEqual(len(full_report["triggers"]), 1)
+        self.assertEqual(len(slid_report["triggers"]), 1)
+        self.assertEqual(
+            full_report["triggers"][0]["trigger_id"],
+            slid_report["triggers"][0]["trigger_id"],
+        )
+        self.assertEqual(full_report["triggers"][0]["trigger_no"], 1)
+
     def test_conclusion_lives_only_in_the_analysis_contract(self) -> None:
         # 单一契约：旧的 conclusion / agent_output / case_context 包装不再出现。
         report = build_drilldown_report(make_boards(trigger_specs(10, 3, 5)))
@@ -549,7 +566,7 @@ class ReportShapeTest(unittest.TestCase):
                 "recheck",
             },
         )
-        self.assertEqual(contract["trigger"]["trigger_id"], "TRG001")
+        self.assertRegex(contract["trigger"]["trigger_id"], r"^TRG-[0-9a-f]{8}$")
         self.assertEqual(contract["trigger"]["trigger_board_count"], 3)
         self.assertEqual(contract["trigger"]["defect_cn"], "多锡")
         self.assertIn("连续 3 块生产板", contract["trigger"]["conclusion"])
