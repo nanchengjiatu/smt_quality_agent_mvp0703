@@ -35,6 +35,12 @@ DEFAULT_DATASOURCE: dict[str, Any] = {
     # Realtime runs load only the most recent N boards; 0 means the full table.
     # Must stay well above the largest analysis lookback (~20 boards / 500 rows).
     "realtime_window_boards": 3000,
+    # EWMA drift-warning parameters, calibrated by the 2026-07-06 backtest
+    # (docs/p0_backtest_report.md).
+    "early_warning": {
+        "lambda": 0.2,
+        "L": 4.0,
+    },
 }
 
 
@@ -73,6 +79,15 @@ def normalize_datasource(payload: dict[str, Any]) -> dict[str, Any]:
         config["realtime_window_boards"] = max(0, int(config.get("realtime_window_boards")))
     except (TypeError, ValueError):
         config["realtime_window_boards"] = DEFAULT_DATASOURCE["realtime_window_boards"]
+    defaults = DEFAULT_DATASOURCE["early_warning"]
+    block = config.get("early_warning") or {}
+    for key in ("lambda", "L"):
+        try:
+            value = float(block.get(key))
+        except (TypeError, ValueError):
+            value = defaults[key]
+        block[key] = value if value > 0 else defaults[key]
+    config["early_warning"] = block
     return config
 
 

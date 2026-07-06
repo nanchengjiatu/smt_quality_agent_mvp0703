@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import hashlib
 import math
+import time
 from collections import deque
 from typing import Any
 
+from smt_quality_agent.affected_model import split_component_pad
+from smt_quality_agent.knowledge_base import PROJECTION_CONFIDENCE
+from smt_quality_agent.ontology import MECHANISMS
 from smt_quality_agent.param_correlation import (
     METRIC_FIELDS,
     as_float,
@@ -27,9 +31,21 @@ from smt_quality_agent.param_correlation import (
 )
 
 
-# Defaults; the backtest grid (backtest_grid) exists to challenge them.
+# Defaults calibrated by the 2026-07-06 parameter-grid backtest
+# (docs/p0_backtest_report.md): the lowest-false-alarm tier that keeps the
+# 11-board lead on the under-volume trigger pad. Overridable via the
+# datasource config's "early_warning" block.
 EWMA_LAMBDA = 0.2
-EWMA_LIMIT_L = 3.0
+EWMA_LIMIT_L = 4.0
+
+# Reviewed decision: only L3 pages the user (~1.5 prompts/day at current
+# rates); L1/L2 feed the pad-health matrix silently.
+PAGE_ALERT_MIN_LEVEL = 3
+
+# An active episode that has stayed above the limit this long is a step shift
+# ("new normal pending confirmation"), not a fresh alert: it leaves the paging
+# bucket and waits for the accept-as-new-baseline action (phase 3 UI).
+STALE_ALERT_BOARDS = 100
 
 # Rolling per-pad baseline: previous PASS observations only, frozen while the
 # metric is in alarm so a drift cannot drag its own control limit upward.
@@ -213,6 +229,7 @@ def monitor_pad(
     states = {field: _new_metric_state() for field in METRIC_FIELDS}
     episodes: list[dict[str, Any]] = []
     levels: list[int] = []
+    trace: list[dict[str, float | None]] = []
     episode: dict[str, Any] | None = None
     below_streak = 0
     floors = ng_floors or []
@@ -247,6 +264,12 @@ def monitor_pad(
             # while this metric is in alarm (the freeze from §3.1).
             if not state["above"] and not point["is_ng"]:
                 _update_baseline(state, value, lam, limit_l, baseline_boards)
+
+        avdp_state = states["comp_avdp"]
+        trace.append({
+            "ewma": avdp_state["ewma"] if avdp_state["armed"] else None,
+            "limit": avdp_state["limit"] if avdp_state["armed"] else None,
+        })
 
         level = 0
         if crossed:
@@ -300,7 +323,19 @@ def monitor_pad(
         episode["metrics"] = sorted(episode["metrics"])
         episodes.append(episode)  # still active at end of window
 
-    return {"episodes": episodes, "levels": levels}
+    return {
+        "episodes": episodes,
+        "levels": levels,
+        "trace": trace,
+        "final": {
+            field: {
+                key: states[field][key]
+                for key in ("armed", "ewma", "mu", "sigma", "limit", "above")
+            }
+            for field in METRIC_FIELDS
+        },
+        "ng_floor": current_floor,
+    }
 
 
 def replay(
@@ -411,6 +446,180 @@ def backtest(
                 )
             }
             for episode in l2_episodes
+        ],
+    }
+
+
+def nominate_mechanisms(spatial_id: str) -> list[dict[str, Any]]:
+    """Mechanism hints for a warning: early-warning-capable mechanisms whose
+    typical spatial range covers the warning's scope.
+
+    Direction is unknown at warning time (Comp_*dp carry no sign), so unlike
+    diagnosis projection this accepts mechanisms of any declared direction and
+    keeps the flat projection prior — these are hints, not conclusions.
+    """
+    candidates = []
+    for mechanism_id, mechanism in MECHANISMS.items():
+        props = mechanism.get("properties") or {}
+        if not props.get("early_warning"):
+            continue
+        if spatial_id not in (props.get("typical_spatial") or []):
+            continue
+        candidates.append({
+            "mechanism": mechanism_id,
+            "cause": mechanism["label"],
+            "direction": props.get("direction", ""),
+            "early_warning": props["early_warning"],
+            "action": props.get("action", ""),
+            "confidence": PROJECTION_CONFIDENCE,
+            "evidence": "预警提名：方向未知，按机理的可预警特征与空间范围投影，非诊断结论。",
+        })
+    return candidates
+
+
+def _warning_series(
+    points: list[dict[str, Any]],
+    trace: list[dict[str, float | None]],
+    start_index: int,
+    end_index: int | None,
+    context_boards: int = 20,
+    max_points: int = 120,
+) -> list[dict[str, Any]]:
+    stop = end_index if end_index is not None else len(points) - 1
+    begin = max(0, start_index - context_boards)
+    begin = max(begin, stop - max_points + 1)
+    series = []
+    for index in range(begin, stop + 1):
+        point = points[index]
+        entry = trace[index]
+        series.append({
+            "board_sn": point["board_sn"],
+            "time": point["time_text"],
+            "is_ng": point["is_ng"],
+            "value": point["values"].get("comp_avdp"),
+            "ewma": round(entry["ewma"], 2) if entry["ewma"] is not None else None,
+            "limit": round(entry["limit"], 2) if entry["limit"] is not None else None,
+        })
+    return series
+
+
+def build_early_warning_report(
+    rows: list[dict[str, Any]],
+    source_table: str = "",
+    lam: float = EWMA_LAMBDA,
+    limit_l: float = EWMA_LIMIT_L,
+    baseline_boards: int = BASELINE_BOARDS,
+) -> dict[str, Any]:
+    """The early_warning stage's output contract (design §4).
+
+    ``warnings`` carries every episode (page alerts are the active L3 subset,
+    flagged via ``page_alert``); ``pad_health`` is the all-pads matrix the
+    frontend colours by margin.
+    """
+    played = replay(rows, lam, limit_l, baseline_boards)
+    floors = causal_ng_floors(rows)
+    ng_floor = floors[-1][1] if floors else None
+
+    warnings = []
+    pad_health = []
+    for (model, pad_name), item in sorted(played["series"].items()):
+        points = item["points"]
+        result = item["result"]
+        is_board = pad_name == BOARD_PAD
+        spatial_id = "spatial.board_wide" if is_board else "spatial.single_pad"
+        component, pad = ("", "") if is_board else split_component_pad(pad_name)
+
+        avdp_final = result["final"]["comp_avdp"]
+        margin = None
+        if (
+            ng_floor is not None
+            and avdp_final["armed"]
+            and avdp_final["sigma"]
+        ):
+            margin = round(
+                (ng_floor - avdp_final["ewma"]) / (3.0 * avdp_final["sigma"]), 2,
+            )
+
+        active = next(
+            (episode for episode in result["episodes"] if episode["end_index"] is None),
+            None,
+        )
+        pad_health.append({
+            "model": model,
+            "pad_name": pad_name,
+            "is_board_series": is_board,
+            "boards": len(points),
+            "ng_count": sum(1 for point in points if point["is_ng"]),
+            "level": active["level"] if active else 0,
+            "episode_active": active is not None,
+            "margin": margin,
+            "avdp": {
+                "ewma": round(avdp_final["ewma"], 2) if avdp_final["armed"] else None,
+                "mu": round(avdp_final["mu"], 2) if avdp_final["armed"] else None,
+                "limit": round(avdp_final["limit"], 2) if avdp_final["armed"] else None,
+            },
+        })
+
+        for episode in result["episodes"]:
+            status = "active" if episode["end_index"] is None else "recovered"
+            pending_new_baseline = (
+                status == "active" and episode["boards_above"] >= STALE_ALERT_BOARDS
+            )
+            warnings.append({
+                "warning_id": episode["warning_id"],
+                "model": model,
+                "pad_name": pad_name,
+                "component": component,
+                "pad": pad,
+                "is_board_series": is_board,
+                "level": episode["level"],
+                "status": status,
+                "pending_new_baseline": pending_new_baseline,
+                "page_alert": (
+                    status == "active"
+                    and episode["level"] >= PAGE_ALERT_MIN_LEVEL
+                    and not pending_new_baseline
+                ),
+                "start_time": episode["start_time_text"],
+                "start_board_sn": episode["start_board_sn"],
+                "l2_time": episode["l2_time_text"],
+                "boards_above": episode["boards_above"],
+                "metrics": episode["metrics"],
+                "margin": margin,
+                "mechanism_candidates": nominate_mechanisms(spatial_id),
+                "series": _warning_series(
+                    points, result["trace"], episode["start_index"], episode["end_index"],
+                ),
+            })
+
+    # Page alerts first, then active episodes, then the rest, newest first.
+    warnings.sort(
+        key=lambda w: (not w["page_alert"], w["status"] != "active", w["start_time"]),
+    )
+
+    return {
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source_table": source_table,
+        "params": {
+            "lambda": lam,
+            "L": limit_l,
+            "baseline_boards": baseline_boards,
+            "page_alert_min_level": PAGE_ALERT_MIN_LEVEL,
+        },
+        "ng_floor_avdp": ng_floor,
+        "summary": {
+            "pads_monitored": sum(1 for item in pad_health if not item["is_board_series"]),
+            "active_episodes": sum(1 for w in warnings if w["status"] == "active"),
+            "page_alerts": sum(1 for w in warnings if w["page_alert"]),
+            "pending_new_baseline": sum(1 for w in warnings if w["pending_new_baseline"]),
+        },
+        "warnings": warnings,
+        "pad_health": pad_health,
+        "caveats": [
+            "Comp_*dp 是无符号偏差幅度，预警只监控幅度爬升，方向要等出现 NG 才能确认。",
+            "margin 参照的是滑窗内 NG 的最低观测值，不是 SPI 规格限；规格限到位后同一字段换真 Cpk。",
+            "L1/L2 只进健康矩阵；页面提示仅限活动中的 L3（约束见回测报告）。",
+            f"越限持续 ≥{STALE_ALERT_BOARDS} 板的活动告警视为台阶式新常态，转入待确认桶，不再占用页面提示。",
         ],
     }
 

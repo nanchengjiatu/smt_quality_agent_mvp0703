@@ -3,9 +3,12 @@ import unittest
 from smt_quality_agent.early_warning import (
     BASELINE_MIN_RECORDS,
     BOARD_PAD,
+    PAGE_ALERT_MIN_LEVEL,
     backtest,
+    build_early_warning_report,
     causal_ng_floors,
     monitor_pad,
+    nominate_mechanisms,
     pad_points,
     replay,
     warning_id,
@@ -182,6 +185,88 @@ class ReplayAndBacktestTest(unittest.TestCase):
         self.assertTrue(
             all(episode["pad_name"] != "C2_1" for episode in report["l2_episodes"]),
         )
+
+
+class MechanismNominationTest(unittest.TestCase):
+    def test_pad_warning_nominates_pad_scope_early_warning_mechanisms(self) -> None:
+        candidates = nominate_mechanisms("spatial.single_pad")
+        ids = {item["mechanism"] for item in candidates}
+        self.assertIn("mech.aperture_clogging", ids)
+        self.assertIn("mech.understencil_residue", ids)
+        self.assertNotIn("mech.paste_rheology_drift", ids)
+        self.assertTrue(all(item["early_warning"] for item in candidates))
+
+    def test_board_warning_nominates_board_scope_mechanisms(self) -> None:
+        ids = {item["mechanism"] for item in nominate_mechanisms("spatial.board_wide")}
+        self.assertIn("mech.paste_rheology_drift", ids)
+        self.assertNotIn("mech.aperture_clogging", ids)
+
+
+class ReportContractTest(unittest.TestCase):
+    def test_report_shape_and_alert_gating(self) -> None:
+        rows = ReplayAndBacktestTest().make_rows()
+        report = build_early_warning_report(rows, "test.table")
+        self.assertEqual(report["source_table"], "test.table")
+        self.assertEqual(report["params"]["page_alert_min_level"], PAGE_ALERT_MIN_LEVEL)
+        self.assertEqual(report["summary"]["pads_monitored"], 2)
+
+        pads = {item["pad_name"] for item in report["pad_health"]}
+        self.assertEqual(pads, {"C1_1", "C2_1", BOARD_PAD})
+
+        drift_warnings = [w for w in report["warnings"] if w["pad_name"] == "C1_1"]
+        self.assertTrue(drift_warnings)
+        warning = drift_warnings[0]
+        self.assertGreaterEqual(warning["level"], 2)
+        self.assertEqual(warning["component"], "C1")
+        self.assertTrue(warning["mechanism_candidates"])
+        self.assertTrue(warning["series"])
+        first = warning["series"][0]
+        self.assertEqual(
+            set(first), {"board_sn", "time", "is_ng", "value", "ewma", "limit"},
+        )
+        # page_alert must be exactly "active, at/above the gate, and fresh".
+        for item in report["warnings"]:
+            self.assertEqual(
+                item["page_alert"],
+                item["status"] == "active"
+                and item["level"] >= PAGE_ALERT_MIN_LEVEL
+                and not item["pending_new_baseline"],
+            )
+
+    def test_step_shift_becomes_pending_new_baseline_not_page_alert(self) -> None:
+        # A level shift that stays above the limit for 150 boards is a "new
+        # normal pending confirmation", not a fresh page alert.
+        values = stable(200) + stable(150, base=30.0)
+        rows = []
+        for index, value in enumerate(values):
+            rows.append({
+                "cmodel": "M", "barcode": f"B{index:04d}", "fdate": fdate(index),
+                "compname": "C1_1", "comp_errname": "PASS",
+                "comp_avdp": value, "comp_aadp": 10.0, "comp_ahdp": 10.0,
+            })
+        report = build_early_warning_report(rows)
+        active = [w for w in report["warnings"] if w["status"] == "active"]
+        self.assertTrue(active)
+        stale = active[0]
+        self.assertTrue(stale["pending_new_baseline"])
+        self.assertFalse(stale["page_alert"])
+        self.assertGreaterEqual(report["summary"]["pending_new_baseline"], 1)
+
+    def test_stable_data_reports_empty_but_honest(self) -> None:
+        rows = []
+        for index, value in enumerate(stable(120)):
+            rows.append({
+                "cmodel": "M", "barcode": f"B{index:04d}", "fdate": fdate(index),
+                "compname": "C1_1", "comp_errname": "PASS",
+                "comp_avdp": value, "comp_aadp": 10.0, "comp_ahdp": 10.0,
+            })
+        report = build_early_warning_report(rows)
+        self.assertEqual(report["warnings"], [])
+        self.assertEqual(report["summary"]["page_alerts"], 0)
+        self.assertIsNone(report["ng_floor_avdp"])
+        health = next(i for i in report["pad_health"] if i["pad_name"] == "C1_1")
+        self.assertIsNone(health["margin"])
+        self.assertIsNotNone(health["avdp"]["ewma"])
 
 
 class PadPointsTest(unittest.TestCase):

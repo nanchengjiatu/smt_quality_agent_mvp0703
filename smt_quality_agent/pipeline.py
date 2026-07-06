@@ -24,6 +24,7 @@ from smt_quality_agent.datasource import (
     source_table_label,
 )
 from smt_quality_agent.drilldown import build_drilldown_report
+from smt_quality_agent.early_warning import build_early_warning_report
 from smt_quality_agent.over_volume import normalize_spi_rows
 from smt_quality_agent.param_correlation import build_param_analysis, first_inspection_rows
 from smt_quality_agent.rules_engine import build_quality_cases, infer_total_pad_counts, run_agent
@@ -44,6 +45,7 @@ STAGE_FILES: dict[str, tuple[str, ...]] = {
     ),
     "param_analysis": ("param_analysis.json",),
     "drilldown": ("drilldown.json",),
+    "early_warning": ("early_warning.json",),
 }
 
 
@@ -202,7 +204,7 @@ def run_pipeline(database: str | None = None, window_boards: int | None = None) 
             error = f"psql: {exc.stderr.strip().splitlines()[-1]}"
         stages = [
             {"stage": name, "ok": False, "ms": 0, "error": error}
-            for name in ("anomaly_cases", "param_analysis", "drilldown")
+            for name in ("anomaly_cases", "param_analysis", "drilldown", "early_warning")
         ]
         return {
             "ok": False,
@@ -253,10 +255,18 @@ def run_pipeline(database: str | None = None, window_boards: int | None = None) 
         write_json(OUTPUT_DIR / "drilldown.json", build_drilldown_report(full_rows, source_table))
         return {"rows": len(full_rows), "files": list(STAGE_FILES["drilldown"])}
 
+    def early_warning_work() -> dict[str, Any]:
+        params = datasource_for(database)["early_warning"]
+        write_json(OUTPUT_DIR / "early_warning.json", build_early_warning_report(
+            full_rows, source_table, lam=params["lambda"], limit_l=params["L"],
+        ))
+        return {"rows": len(full_rows), "files": list(STAGE_FILES["early_warning"])}
+
     stages = [
         _stage("anomaly_cases", anomaly_work),
         _stage("param_analysis", param_work),
         _stage("drilldown", drilldown_work),
+        _stage("early_warning", early_warning_work),
     ]
     return {
         "ok": all(stage["ok"] for stage in stages),
