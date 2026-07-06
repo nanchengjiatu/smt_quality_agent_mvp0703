@@ -17,3 +17,6 @@ output/*.json
 
 # Local datasource credentials
 config/datasource.json
+
+# Local LLM provider credentials
+config/llm.json

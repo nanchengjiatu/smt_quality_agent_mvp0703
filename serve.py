@@ -44,8 +44,9 @@ from smt_quality_agent.datasource import (
     save_datasource,
     test_datasource,
 )
-from smt_quality_agent.drilldown_chat import build_rule_chat_response
+from smt_quality_agent.drilldown_chat import build_chat_response
 from smt_quality_agent.knowledge_base import rule_catalog
+from smt_quality_agent.llm import masked_llm_config, save_llm_config, test_llm
 from smt_quality_agent.ontology import ontology_snapshot
 from smt_quality_agent.pipeline import (
     OUTPUT_DIR,
@@ -272,11 +273,29 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self._send_json(run_and_record(DATABASE_OVERRIDE))
             return
+        if path == "/api/llm":
+            try:
+                self._send_json(masked_llm_config(save_llm_config(self._read_json())))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+            return
+        if path == "/api/llm/test":
+            try:
+                self._send_json(test_llm(self._read_json()))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+            return
         if path == "/api/drilldown/chat":
             try:
                 payload = self._read_json()
                 trigger = load_drilldown_trigger(str(payload.get("trigger_id") or ""))
-                self._send_json(build_rule_chat_response(trigger, str(payload.get("question") or "")))
+                self._send_json(build_chat_response(trigger, str(payload.get("question") or "")))
             except Exception as exc:  # noqa: BLE001
                 self._send_json(
                     {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
@@ -297,6 +316,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path.rstrip("/") == "/api/datasource":
             self._send_json(masked_datasource())
+            return
+        if path.rstrip("/") == "/api/llm":
+            self._send_json(masked_llm_config())
             return
         if path.rstrip("/") == "/api/live":
             with _state_lock:

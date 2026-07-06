@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "provider": "deepseek",
+  "api_key": "",
+  "model": "",
+  "base_url": "",
+  "timeout_seconds": 30
+}

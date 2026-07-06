@@ -9,7 +9,11 @@ category instead of a fixed canned sentence.
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+from smt_quality_agent.llm import chat_completion, load_llm_config
+from smt_quality_agent.ontology import MECHANISMS
 
 
 QUICK_QUESTIONS = [
@@ -200,3 +204,81 @@ def build_rule_chat_response(trigger: dict[str, Any], question: str) -> dict[str
         "question": normalized,
         "answer": answer,
     }
+
+
+def build_llm_grounding(trigger: dict[str, Any]) -> str:
+    """System prompt: role + answering rules + this trigger's authoritative
+    contract + the mechanism catalog (single-source root-cause vocabulary).
+
+    Large arrays (pad series, heatmap, full SPI window) stay out of the
+    prompt; the analysis_contract already carries every judged conclusion.
+    """
+    mechanism_lines = []
+    for mechanism_id, mechanism in MECHANISMS.items():
+        props = mechanism.get("properties") or {}
+        mechanism_lines.append(
+            f"- {mechanism_id} {mechanism['label']}｜方向:{props.get('direction', '')}"
+            f"｜签名:{props.get('signature_text', '')}｜动作:{props.get('action', '')}"
+        )
+
+    contract = _contract(trigger)
+    parameter_check = trigger.get("parameter_check") or {}
+    facts = {
+        "analysis_contract": contract,
+        "parameter_check_verdict": parameter_check.get("verdict", ""),
+        "param_event_count": len(trigger.get("param_events") or []),
+        "trigger_meta": {
+            "trigger_id": trigger.get("trigger_id"),
+            "model": trigger.get("model"),
+            "pad_name": trigger.get("pad_name"),
+            "main_defect_cn": trigger.get("main_defect_cn"),
+            "start_time": trigger.get("start_time"),
+            "end_time": trigger.get("end_time"),
+            "trigger_board_count": trigger.get("trigger_board_count"),
+        },
+    }
+
+    return (
+        "你是 SMT 锡膏印刷 + SPI 质量分析助手，嵌在一个三板连发下钻工作台里。\n"
+        "回答规范：\n"
+        "1. 只依据下方资料回答；资料没有的信息要明说“数据未采集”或“证据不足”，不得编造。\n"
+        "2. 用中文，按“结论/证据/下一步”三段作答，总长不超过 300 字。\n"
+        "3. 提及根因时使用机理目录里的机理（引用 mech.* id），提及规则时引用 rule id。\n"
+        "4. Comp_avdp/aadp/ahdp 是无符号偏差幅度，缺陷方向只在缺陷名里，不要把幅度当方向。\n"
+        "\n=== 本次触发的分析契约（唯一权威结论）===\n"
+        + json.dumps(facts, ensure_ascii=False)
+        + "\n\n=== 失效机理目录（根因词表单源）===\n"
+        + "\n".join(mechanism_lines)
+    )
+
+
+def build_chat_response(
+    trigger: dict[str, Any],
+    question: str,
+    config: dict[str, Any] | None = None,
+    post: Any = None,
+) -> dict[str, Any]:
+    """LLM first, rule-based fallback — the offline responder never goes away."""
+    normalized = (question or "").strip() or "现场先查什么？"
+    config = config if config is not None else load_llm_config()
+
+    if config.get("enabled") and config.get("api_key"):
+        try:
+            kwargs = {"post": post} if post is not None else {}
+            text = chat_completion(
+                config, build_llm_grounding(trigger), normalized, **kwargs,
+            )
+            return {
+                "mode": "llm",
+                "provider": config["provider"],
+                "model": config["model"],
+                "trigger_id": trigger.get("trigger_id"),
+                "question": normalized,
+                "answer": {"text": text},
+            }
+        except Exception as exc:  # noqa: BLE001 - any failure falls back
+            fallback = build_rule_chat_response(trigger, normalized)
+            fallback["fallback_reason"] = f"LLM 调用失败，已回退离线规则问答（{exc}）"
+            return fallback
+
+    return build_rule_chat_response(trigger, normalized)

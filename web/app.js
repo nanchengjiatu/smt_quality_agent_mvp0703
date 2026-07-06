@@ -55,6 +55,7 @@ const searchInput = document.getElementById("searchInput");
 
 document.getElementById("refreshButton").addEventListener("click", refreshData);
 document.getElementById("datasourceButton").addEventListener("click", openDatasourceDialog);
+document.getElementById("llmButton").addEventListener("click", openLlmDialog);
 document.getElementById("rulesButton").addEventListener("click", () => setActiveView("rules"));
 
 document.querySelectorAll(".tab").forEach((button) => {
@@ -515,6 +516,131 @@ async function openDatasourceDialog() {
   });
   overlay.querySelector("#datasourceTest").addEventListener("click", testDatasourceFromForm);
   overlay.querySelector("#datasourceSave").addEventListener("click", saveDatasourceFromForm);
+}
+
+// ------- P2 LLM 问答配置：六家提供商，三协议适配，密钥只存本机 -------
+
+async function openLlmDialog() {
+  let config = null;
+  try {
+    config = await fetchJson("/api/llm");
+  } catch (error) {
+    showToast(`读取 LLM 配置失败：${error.message}`);
+    return;
+  }
+  const providers = config.providers || {};
+
+  const existing = document.getElementById("llmOverlay");
+  if (existing) {
+    existing.remove();
+  }
+  const overlay = document.createElement("div");
+  overlay.id = "llmOverlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-panel datasource-modal" role="dialog" aria-modal="true" aria-labelledby="llmTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="llmTitle">LLM 问答配置</h2>
+          <p>下钻对话优先由所选大模型回答（基于本次触发的分析契约与机理目录 grounding）；未启用或调用失败时自动回退离线规则问答。密钥仅保存在本机 config/llm.json。</p>
+        </div>
+        <button class="modal-close" data-llm-close aria-label="关闭">×</button>
+      </div>
+      <form id="llmForm" class="datasource-form" data-key-set="${config.key_set ? "1" : "0"}">
+        <label class="llm-enable">
+          启用 LLM 问答
+          <input name="enabled" type="checkbox" ${config.enabled ? "checked" : ""}>
+        </label>
+        <label>
+          提供商
+          <select name="provider" id="llmProvider">
+            ${Object.entries(providers).map(([name, info]) => `
+              <option value="${escapeHtml(name)}" ${name === config.provider ? "selected" : ""}>${escapeHtml(info.label)}</option>
+            `).join("")}
+          </select>
+        </label>
+        <label>
+          API Key
+          <input name="api_key" type="password" value="" placeholder="${config.key_set ? "留空表示不修改已保存密钥" : "必填"}" autocomplete="off">
+        </label>
+        <label>
+          模型
+          <input name="model" id="llmModel" value="${escapeHtml(config.model || "")}">
+        </label>
+        <label class="llm-wide">
+          接口地址（Base URL，代理/网关可改）
+          <input name="base_url" id="llmBaseUrl" value="${escapeHtml(config.base_url || "")}">
+        </label>
+        <label>
+          超时(秒)
+          <input name="timeout_seconds" type="number" min="5" value="${escapeHtml(config.timeout_seconds || 30)}">
+        </label>
+      </form>
+      <div id="llmResult" class="datasource-result"></div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-button" id="llmTest">测试连接</button>
+        <button type="button" class="secondary-button" data-llm-close>取消</button>
+        <button type="button" class="primary-button" id="llmSave">保存配置</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll("[data-llm-close]").forEach((button) => {
+    button.addEventListener("click", () => overlay.remove());
+  });
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      overlay.remove();
+    }
+  });
+  overlay.querySelector("#llmProvider").addEventListener("change", (event) => {
+    const info = providers[event.target.value] || {};
+    overlay.querySelector("#llmModel").value = info.default_model || "";
+    overlay.querySelector("#llmBaseUrl").value = info.base_url || "";
+  });
+  overlay.querySelector("#llmTest").addEventListener("click", () => llmRequest("/api/llm/test", "测试中...", (body) =>
+    `连接成功：${body.provider} · ${body.model} · ${body.latency_ms}ms · 回复「${body.reply}」`));
+  overlay.querySelector("#llmSave").addEventListener("click", () => llmRequest("/api/llm", "保存中...", () => "配置已保存。"));
+}
+
+function llmPayloadFromForm() {
+  const form = document.getElementById("llmForm");
+  const data = new FormData(form);
+  const key = String(data.get("api_key") || "");
+  return {
+    enabled: form.querySelector('[name="enabled"]').checked,
+    provider: String(data.get("provider") || ""),
+    api_key: key || (form.dataset.keySet === "1" ? "******" : ""),
+    model: String(data.get("model") || "").trim(),
+    base_url: String(data.get("base_url") || "").trim(),
+    timeout_seconds: Number(data.get("timeout_seconds") || 30),
+  };
+}
+
+async function llmRequest(endpoint, busyText, successText) {
+  const result = document.getElementById("llmResult");
+  result.className = "datasource-result";
+  result.textContent = busyText;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(llmPayloadFromForm()),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || body.ok === false) {
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+    result.className = "datasource-result ok";
+    result.textContent = successText(body);
+    const form = document.getElementById("llmForm");
+    if (endpoint === "/api/llm" && body.key_set) {
+      form.dataset.keySet = "1";
+    }
+  } catch (error) {
+    result.className = "datasource-result error";
+    result.textContent = `失败：${error.message}`;
+  }
 }
 
 function closeDatasourceDialog() {

@@ -140,6 +140,30 @@ main {
   gap: 12px;
 }
 
+/* ---------- LLM 对话（P2） ---------- */
+
+.dd-chat-source {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px dashed var(--line);
+  padding-top: 4px;
+}
+
+.dd-chat-freeform {
+  white-space: pre-wrap;
+}
+
+.llm-enable {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.llm-wide {
+  grid-column: 1 / -1;
+}
+
 /* ---------- 工艺维度体检（P1） ---------- */
 
 .pd-cards {

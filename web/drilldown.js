@@ -197,6 +197,18 @@ function renderChatMessages() {
       return `<div class="dd-chat-bubble assistant error">${escapeHtml(message.error)}</div>`;
     }
     const answer = message.answer || {};
+    const source = message.mode === "llm"
+      ? `${message.provider || "LLM"} · ${message.model || ""}`
+      : "离线规则";
+    const sourceLine = `<div class="dd-chat-source">${escapeHtml(source)}${message.fallback_reason ? ` · ${escapeHtml(message.fallback_reason)}` : ""}</div>`;
+    if (answer.text != null) {
+      return `
+        <div class="dd-chat-bubble assistant">
+          <p class="dd-chat-freeform">${escapeHtml(answer.text)}</p>
+          ${sourceLine}
+        </div>
+      `;
+    }
     return `
       <div class="dd-chat-bubble assistant">
         <strong>结论</strong>
@@ -205,6 +217,7 @@ function renderChatMessages() {
         <p>${escapeHtml(answer.evidence || "暂无证据")}</p>
         <strong>下一步</strong>
         <p>${escapeHtml(answer.next_step || "暂无建议")}</p>
+        ${sourceLine}
       </div>
     `;
   }).join("");
@@ -221,7 +234,8 @@ function renderChatPanel(trigger) {
   return `
     <h3>对话分析</h3>
     <div class="dd-chat-note">
-      当前为<strong>离线规则问答</strong>，只基于本次触发事件的 Agent 输出、证据摘要和排除检查回答。
+      已启用 LLM 时由所选大模型基于本次触发的分析契约与机理目录回答（来源见每条回答标注），
+      未配置或调用失败时自动回退<strong>离线规则问答</strong>。顶栏「LLM」按钮可配置提供商。
     </div>
     <div class="dd-chat-quick">
       ${quickQuestions.map((question) => `
@@ -469,7 +483,15 @@ async function askDrilldownQuestion(question) {
     if (!response.ok || body.ok === false) {
       throw new Error(body.error || `HTTP ${response.status}`);
     }
-    drilldownState.chatMessages.push({ role: "assistant", answer: body.answer, intent: body.intent });
+    drilldownState.chatMessages.push({
+      role: "assistant",
+      answer: body.answer,
+      intent: body.intent,
+      mode: body.mode,
+      provider: body.provider,
+      model: body.model,
+      fallback_reason: body.fallback_reason,
+    });
   } catch (error) {
     drilldownState.chatMessages.push({
       role: "assistant",
