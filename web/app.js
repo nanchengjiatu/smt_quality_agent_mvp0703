@@ -1685,12 +1685,12 @@ function renderDecisionFlow(decisionRules, dispositionRules, catalog) {
   }
   const confCard = `
     <div class="conf-card">
-      <strong>置信度算式（数值取自知识库常量，改常量页面自动跟随）</strong>
-      <p>最终置信 = 起点先验 × 签名甄别（匹配 ×${model.signature_match ?? "-"} / 方向硬冲突 ×${model.signature_conflict ?? "-"} / 弱分歧不动）
-        × 空间典型性（典型 ×${model.spatial_typical ?? "-"} / 非典型 ×${model.spatial_atypical ?? "-"}）
-        × 擦网对齐（命中 ×${model.cleaning_alignment ?? "-"}）
-        × 跨机种基线（是 ×${model.cross_model ?? "-"}），封顶 ${model.cap ?? "-"}</p>
-      <p>强度分档由最终置信推导：≥${model.level_high ?? "-"} 高 / ≥${model.level_medium ?? "-"} 中 / 其余 低</p>
+      <strong>把握度怎么算（置信度算式，数值取自知识库常量，改常量页面自动跟随）</strong>
+      <p>最终把握 = 初始把握 × 三指标症状对不对得上（吻合 ×${model.signature_match ?? "-"} / 方向相反 ×${model.signature_conflict ?? "-"} / 说不清不动）
+        × 出现位置典不典型（典型 ×${model.spatial_typical ?? "-"} / 不典型 ×${model.spatial_atypical ?? "-"}）
+        × NG 节拍与擦网周期合不合拍（合拍 ×${model.cleaning_alignment ?? "-"}）
+        × 参数基线是否借自其他机种（是 ×${model.cross_model ?? "-"}），封顶 ${model.cap ?? "-"}</p>
+      <p>把握分档：≥${model.level_high ?? "-"} 高 / ≥${model.level_medium ?? "-"} 中 / 其余 低</p>
       ${example ? `<p class="details">${escapeHtml(example)}</p>` : ""}
     </div>
   `;
@@ -1701,23 +1701,23 @@ function renderDecisionFlow(decisionRules, dispositionRules, catalog) {
 
   const steps = [
     {
-      title: "门槛 —— 先判这次数据能不能信",
-      note: "命中则改变整体走向，后面的根因提名按假异常口径进行",
+      title: "这个 NG 是真的吗？",
+      note: "先排除 SPI 测量误报——测量框/阈值/对位问题造成的假 NG 不折腾印刷参数（技术名：门槛 gate）",
       body: byRole("gate").map(ruleRow).join(""),
     },
     {
-      title: "候选提名 —— 谁可能是根因",
-      note: "每条命中产出一个带起点先验的机理候选；末条投影是无直接佐证时的兜底",
+      title: "可能是哪里出的问题？",
+      note: "按证据列出嫌疑原因，每条带一个初始把握度；最后一条投影是没有直接证据时按缺陷方向圈的常见嫌疑（技术名：候选提名 nominate）",
       body: byRole("nominate").map(ruleRow).join(""),
     },
     {
-      title: "置信度调整 —— 候选按观测证据加减分",
-      note: "只修正置信度，不新增候选",
+      title: "把握有多大？",
+      note: "拿观测到的证据逐条核对：对得上加分、对不上减分，只改把握度不加新嫌疑（技术名：置信度调整 adjust）",
       body: byRole("adjust").map(ruleRow).join("") + confCard,
     },
     {
-      title: "排序 · 同机理去重 · 取前 3 → 处置分级",
-      note: "按最终置信排序后进入处置阶梯，自上而下首个命中生效",
+      title: "现场先干什么？",
+      note: "把握度排序、同一原因只留最高的、取前 3 给现场；处置按风险等级自上而下首个命中生效",
       body: sortedDispositions.map((rule) => `
         <div class="flow-rule">
           <span class="ladder-order priority-${escapeHtml(rule.priority || "")}">${escapeHtml(rule.priority || "")}</span>
