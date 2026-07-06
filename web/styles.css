@@ -955,73 +955,99 @@ tr:last-child td {
   color: var(--accent-dark);
 }
 
-/* -- 诊断决策管道 ------------------------------------------------------- */
-.pipeline {
-  display: flex;
-  align-items: stretch;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 4px 0 8px;
+/* -- 决策层 · 从观测到处置的四步 ----------------------------------------- */
+.flow-steps {
+  display: grid;
+  gap: 0;
 }
 
-.pipe-input {
+.flow-step {
+  display: flex;
+  gap: 14px;
+}
+
+.flow-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   flex: none;
-  align-self: center;
-  padding: 12px 10px;
-  border-radius: 8px;
+  width: 30px;
+}
+
+.flow-no {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   background: #17202b;
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  text-align: center;
-  line-height: 1.5;
-}
-
-.pipe-arrow {
-  align-self: center;
-  color: var(--muted);
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
 }
 
-.pipe-stage {
+.flow-line {
   flex: 1;
-  min-width: 170px;
+  width: 2px;
+  background: var(--line);
+  margin: 4px 0;
+}
+
+.flow-content {
+  flex: 1;
+  padding-bottom: 18px;
+  min-width: 0;
+}
+
+.flow-head {
+  margin-bottom: 6px;
+}
+
+.flow-head strong {
+  margin-right: 10px;
+}
+
+.flow-rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fbfcfe;
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-  align-content: start;
+  padding: 6px 10px;
+  font-size: 12px;
+  margin-bottom: 4px;
 }
 
-.pipe-stage-fixed {
-  min-width: 130px;
-  background: #eef2f6;
-  align-content: center;
-  text-align: center;
-}
-
-.pipe-stage-head strong {
-  display: block;
+.flow-rule strong {
   font-size: 13px;
 }
 
-.pipe-rule {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 6px 8px;
+.flow-outcome {
+  color: var(--accent-dark, #2f6fed);
   font-size: 12px;
 }
 
-.pipe-rule .ladder-order {
-  min-width: 52px;
+.flow-rule .ladder-order {
+  min-width: 30px;
   font-size: 11px;
+}
+
+.conf-card {
+  border: 1.5px solid #c7d7f5;
+  border-radius: 8px;
+  background: color-mix(in srgb, #fbfcfe 90%, #2f6fed);
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.conf-card p {
+  margin: 6px 0 0;
+  line-height: 1.6;
 }
 
 /* -- 下钻诊断轨迹 ------------------------------------------------------- */

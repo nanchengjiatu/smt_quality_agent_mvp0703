@@ -586,12 +586,16 @@ def rule_by_id(rule_id: str) -> dict[str, Any] | None:
     return _RULES_BY_ID.get(rule_id)
 
 
+EVIDENCE_LEVEL_HIGH = 0.75
+EVIDENCE_LEVEL_MEDIUM = 0.5
+
+
 def confidence_level(confidence: float) -> str:
     """高/中/低 by final confidence — the single strength scale (v2 had a
     parallel hand-set evidence_level; it is now derived, never stored)."""
-    if confidence >= 0.75:
+    if confidence >= EVIDENCE_LEVEL_HIGH:
         return "高"
-    if confidence >= 0.5:
+    if confidence >= EVIDENCE_LEVEL_MEDIUM:
         return "中"
     return "低"
 
@@ -612,6 +616,9 @@ SPATIAL_ATYPICAL_MULTIPLIER = 0.9
 # NG 周期与擦网频率设定成整数倍关系时,周期性候选的加权。
 CLEANING_ALIGNMENT_MULTIPLIER = 1.15
 CLEANING_ALIGNMENT_TOLERANCE = 0.2
+
+# 参数基线来自其他机种时的整体降权(对比可信度下降)。
+CROSS_MODEL_MULTIPLIER = 0.8
 
 
 def _parse_signature(signature: str) -> dict[str, set[str]]:
@@ -907,7 +914,7 @@ def _decide_parameter_drift(obs: dict[str, Any]) -> list[dict[str, Any]]:
     """Drifted parameters are grouped by the mechanism they physically belong
     to (脱模/刮刀/擦网); only ungrouped parameters fall back to the generic
     parameter-drift rule."""
-    multiplier = 0.8 if obs.get("cross_model_baseline") else 1.0
+    multiplier = CROSS_MODEL_MULTIPLIER if obs.get("cross_model_baseline") else 1.0
     remaining = list(obs["drifted_parameters"])
     candidates = []
 
@@ -1294,6 +1301,18 @@ def rule_catalog() -> dict[str, Any]:
         "rule_count": len(entries),
         "rules": entries,
         "mechanisms": mechanism_catalog(),
+        # 置信度算式的单源数值,供前端"算式卡"展示;改这里的常量页面自动跟随。
+        "confidence_model": {
+            "signature_match": SIGNATURE_MATCH_MULTIPLIER,
+            "signature_conflict": SIGNATURE_CONFLICT_MULTIPLIER,
+            "spatial_typical": SPATIAL_TYPICAL_MULTIPLIER,
+            "spatial_atypical": SPATIAL_ATYPICAL_MULTIPLIER,
+            "cleaning_alignment": CLEANING_ALIGNMENT_MULTIPLIER,
+            "cross_model": CROSS_MODEL_MULTIPLIER,
+            "cap": CONFIDENCE_CAP,
+            "level_high": EVIDENCE_LEVEL_HIGH,
+            "level_medium": EVIDENCE_LEVEL_MEDIUM,
+        },
     }
 
 

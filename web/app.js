@@ -1649,23 +1649,10 @@ function renderRulesView() {
           </section>
 
           <section class="panel" id="layer-decision">
-            <h2>决策层 · 诊断决策管道 <span class="details">观测输入自左向右流经各段;每段内 order 越小越先求值</span></h2>
-            ${renderDecisionPipeline(decisionRules)}
-          </section>
-
-          <section class="panel">
-            <h2>决策层 · 处置阶梯 <span class="details">优先级阶梯,自上而下首个命中生效</span></h2>
-            <div class="ladder">
-              ${dispositionRules.map((rule) => `
-                <div class="ladder-step">
-                  <span class="ladder-order priority-${escapeHtml(rule.priority || "")}">${escapeHtml(rule.priority || "")}</span>
-                  <div>
-                    <strong>${escapeHtml((rule.output || {}).disposition || "")}</strong>
-                    <div class="details">${escapeHtml((rule.output || {}).reason || "")}</div>
-                  </div>
-                </div>
-              `).join("") || `<div class="empty">没有匹配的处置策略</div>`}
-            </div>
+            <h2>决策层 · 从观测到处置的四步
+              <span class="details">每步内 order 越小越先求值；下钻页的「诊断轨迹」记录每次触发在这条流程上的逐条求值结果</span>
+            </h2>
+            ${renderDecisionFlow(decisionRules, dispositionRules, catalog)}
           </section>
         ` : ""}
       </section>
@@ -1673,49 +1660,92 @@ function renderRulesView() {
   `;
 }
 
-const PIPELINE_ROLE_STAGES = [
-  { role: "gate", title: "门槛", note: "改变整体走向" },
-  { role: "nominate", title: "证据/先验提名", note: "产出根因候选" },
-  { role: "adjust", title: "调整", note: "只修正置信度" },
-];
-
-function renderDecisionPipeline(decisionRules) {
+function renderDecisionFlow(decisionRules, dispositionRules, catalog) {
   if (!decisionRules.length) {
     return `<div class="empty">没有匹配的决策规则</div>`;
   }
-  const stages = PIPELINE_ROLE_STAGES.map((stage) => ({
-    ...stage,
-    rules: decisionRules.filter((rule) => rule.role === stage.role),
-  }));
-  const tailStages = [
-    { title: "排序 · 去重 · 取前3", note: "按最终置信度排序,同根因保留最高者", rules: null },
-    { title: "处置分级", note: "见 ④ 处置策略阶梯", rules: null },
-  ];
-  const renderStage = (stage) => `
-    <div class="pipe-stage ${stage.rules ? "" : "pipe-stage-fixed"}">
-      <div class="pipe-stage-head">
-        <strong>${escapeHtml(stage.title)}</strong>
-        <span class="details">${escapeHtml(stage.note)}</span>
-      </div>
-      ${stage.rules ? stage.rules.map((rule) => `
-        <div class="pipe-rule" title="${escapeHtml((rule.output || {}).action || "")}">
-          <span class="ladder-order">${escapeHtml(String(rule.priority || ""))}</span>
-          <div>
-            <strong>${escapeHtml(rule.label || rule.rule_id)}</strong>
-            <div class="details">${escapeHtml((rule.condition || {}).when || "")}</div>
-          </div>
-        </div>
-      `).join("") || `<div class="details">（无匹配规则）</div>` : ""}
+  const byRole = (role) => decisionRules.filter((rule) => rule.role === role);
+  const ruleRow = (rule) => `
+    <div class="flow-rule">
+      <strong>${escapeHtml(rule.label || rule.rule_id)}</strong>
+      <span class="details">${escapeHtml((rule.condition || {}).when || "")}</span>
+      ${(rule.output || {}).action ? `<span class="flow-outcome">→ ${escapeHtml(rule.output.action)}</span>` : ""}
     </div>
   `;
-  return `
-    <div class="pipeline">
-      <div class="pipe-input">观测<br>输入</div>
-      <span class="pipe-arrow">→</span>
-      ${[...stages.map(renderStage), ...tailStages.map(renderStage)]
-        .join(`<span class="pipe-arrow">→</span>`)}
+
+  const model = catalog.confidence_model || {};
+  // 真实触发的置信算式做活例子——知识库常量与实际输出对得上才算讲清楚。
+  let example = "";
+  for (const trigger of ((state.drilldown || {}).triggers) || []) {
+    const candidate = ((trigger.analysis_contract || {}).root_cause_candidates || [])[0];
+    if (candidate && candidate.confidence_formula) {
+      example = `实例（${trigger.trigger_id} 首要候选「${candidate.cause}」）：${candidate.confidence_formula} → ${candidate.evidence_level}`;
+      break;
+    }
+  }
+  const confCard = `
+    <div class="conf-card">
+      <strong>置信度算式（数值取自知识库常量，改常量页面自动跟随）</strong>
+      <p>最终置信 = 起点先验 × 签名甄别（匹配 ×${model.signature_match ?? "-"} / 方向硬冲突 ×${model.signature_conflict ?? "-"} / 弱分歧不动）
+        × 空间典型性（典型 ×${model.spatial_typical ?? "-"} / 非典型 ×${model.spatial_atypical ?? "-"}）
+        × 擦网对齐（命中 ×${model.cleaning_alignment ?? "-"}）
+        × 跨机种基线（是 ×${model.cross_model ?? "-"}），封顶 ${model.cap ?? "-"}</p>
+      <p>强度分档由最终置信推导：≥${model.level_high ?? "-"} 高 / ≥${model.level_medium ?? "-"} 中 / 其余 低</p>
+      ${example ? `<p class="details">${escapeHtml(example)}</p>` : ""}
     </div>
-    <p class="details">下钻页每个触发的「诊断轨迹」折叠区记录本管道对该次触发的逐条求值结果(命中/未命中、置信算式、落选原因)。</p>
+  `;
+
+  const priorityRank = { P1: 1, P2: 2, P3: 3 };
+  const sortedDispositions = [...dispositionRules].sort((a, b) =>
+    (priorityRank[a.priority] || 9) - (priorityRank[b.priority] || 9));
+
+  const steps = [
+    {
+      title: "门槛 —— 先判这次数据能不能信",
+      note: "命中则改变整体走向，后面的根因提名按假异常口径进行",
+      body: byRole("gate").map(ruleRow).join(""),
+    },
+    {
+      title: "候选提名 —— 谁可能是根因",
+      note: "每条命中产出一个带起点先验的机理候选；末条投影是无直接佐证时的兜底",
+      body: byRole("nominate").map(ruleRow).join(""),
+    },
+    {
+      title: "置信度调整 —— 候选按观测证据加减分",
+      note: "只修正置信度，不新增候选",
+      body: byRole("adjust").map(ruleRow).join("") + confCard,
+    },
+    {
+      title: "排序 · 同机理去重 · 取前 3 → 处置分级",
+      note: "按最终置信排序后进入处置阶梯，自上而下首个命中生效",
+      body: sortedDispositions.map((rule) => `
+        <div class="flow-rule">
+          <span class="ladder-order priority-${escapeHtml(rule.priority || "")}">${escapeHtml(rule.priority || "")}</span>
+          <strong>${escapeHtml((rule.output || {}).disposition || "")}</strong>
+          <span class="details">${escapeHtml((rule.output || {}).reason || "")}</span>
+        </div>
+      `).join(""),
+    },
+  ];
+
+  return `
+    <div class="flow-steps">
+      ${steps.map((step, index) => `
+        <div class="flow-step">
+          <div class="flow-marker">
+            <span class="flow-no">${index + 1}</span>
+            ${index < steps.length - 1 ? `<span class="flow-line"></span>` : ""}
+          </div>
+          <div class="flow-content">
+            <div class="flow-head">
+              <strong>${escapeHtml(step.title)}</strong>
+              <span class="details">${escapeHtml(step.note)}</span>
+            </div>
+            ${step.body || `<div class="details">（无规则）</div>`}
+          </div>
+        </div>
+      `).join("")}
+    </div>
   `;
 }
 
