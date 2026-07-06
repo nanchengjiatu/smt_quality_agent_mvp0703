@@ -652,12 +652,20 @@ async function llmRequest(endpoint, busyText, successText) {
     if (!response.ok || body.ok === false) {
       throw new Error(body.error || `HTTP ${response.status}`);
     }
+    if (endpoint === "/api/llm") {
+      // Saving is a terminal action: close the dialog and confirm via toast.
+      // (Test-connection stays inline so the user can retry different keys.)
+      const overlay = document.getElementById("llmOverlay");
+      if (overlay) {
+        overlay.remove();
+      }
+      showToast(body.enabled
+        ? `LLM 配置已保存：${body.provider} · ${body.model}`
+        : "LLM 配置已保存（当前为离线规则问答模式）");
+      return;
+    }
     result.className = "datasource-result ok";
     result.textContent = successText(body);
-    const form = document.getElementById("llmForm");
-    if (endpoint === "/api/llm" && body.key_set) {
-      form.dataset.keySet = "1";
-    }
   } catch (error) {
     result.className = "datasource-result error";
     result.textContent = `失败：${error.message}`;
