@@ -535,7 +535,10 @@ function renderRunChart() {
   const H = 300;
   const padL = 52;
   const padR = overlayValues ? 58 : 16;
-  const padT = 14;
+  // With an overlay the top edge carries its own label row (param name at
+  // the top-right), so the plot starts lower to keep it clear of the top
+  // right-axis tick value.
+  const padT = overlayValues ? 30 : 14;
   const padB = 34;
 
   const values = series.map((point) => point.values[metricField]).filter((value) => value != null);
@@ -693,7 +696,7 @@ ${escapeHtml(metricLabel)} ${formatNumber(value)}% · ${point.is_ng ? escapeHtml
         const value = oMin + (oMax - oMin) * tick / 2;
         parts.push(`<text x="${W - padR + 6}" y="${oy(value) + 4}" class="dd-overlay-axis">${value.toFixed(Math.abs(oMax - oMin) < 1 ? 3 : 1)}</text>`);
       }
-      parts.push(`<text x="${W - padR + 6}" y="${padT - 2}" class="dd-overlay-axis">${escapeHtml(overlayName)}</text>`);
+      parts.push(`<text x="${W - 4}" y="14" text-anchor="end" class="dd-overlay-axis">叠加参数：${escapeHtml(overlayName)}</text>`);
 
       let oPath = "";
       let oPen = false;
