@@ -927,6 +927,7 @@ function renderEventsView() {
         </div>
       </section>
       ${renderDrilldownPanel()}
+      ${renderProcessDimensionsPanel(analysis.process_dimensions)}
       <section class="panel">
         <div class="section-head">
           <h2>参数聚集事件</h2>
@@ -939,6 +940,60 @@ function renderEventsView() {
       ${(analysis.caveats || []).length
         ? `<p class="details caveats">说明：${analysis.caveats.map(escapeHtml).join(" ")}</p>`
         : ""}
+    </div>
+  `;
+}
+
+// ------- P1 工艺维度体检：清洗周期 / 停机首板 / 印刷方向 -------
+
+function renderProcessDimensionsPanel(dimensions) {
+  if (!dimensions) {
+    return "";
+  }
+  const cards = [
+    ["钢网清洗周期效应", dimensions.cleaning_cycle, renderCycleProfile(dimensions.cleaning_cycle)],
+    ["停机后首板效应", dimensions.first_board, ""],
+    ["印刷方向差异", dimensions.direction, ""],
+  ];
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <h2>工艺维度体检</h2>
+        <span class="details">每轮随数据重算 · ${dimensions.board_count ?? "-"} 块板 · 板均噪声 σ=${dimensions.noise_sd_pp ?? "-"}pp</span>
+      </div>
+      <div class="pd-cards">
+        ${cards.map(([title, item, extraHtml]) => item ? `
+          <article class="pd-card pd-${escapeHtml(item.verdict)}">
+            <header>
+              <strong>${escapeHtml(title)}</strong>
+              <span class="pd-verdict">${escapeHtml(item.verdict_label)}</span>
+            </header>
+            <p>${escapeHtml(item.detail)}</p>
+            ${extraHtml}
+            ${item.caveat ? `<p class="details">${escapeHtml(item.caveat)}</p>` : ""}
+          </article>
+        ` : "").join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderCycleProfile(cycle) {
+  const profile = (cycle || {}).profile || [];
+  if (profile.length < 2) {
+    return "";
+  }
+  const means = profile.map((item) => item.mean);
+  const min = Math.min(...means);
+  const span = (Math.max(...means) - min) || 1;
+  return `
+    <div class="pd-profile" title="周期内逐位置板均偏差（第 0 位 = 假定的擦网后首板）">
+      ${profile.map((item) => `
+        <div class="pd-bar-wrap" title="位置 ${item.position}: ${item.mean}pp (n=${item.count})">
+          <div class="pd-bar" style="height:${Math.round(18 + ((item.mean - min) / span) * 42)}px"></div>
+          <span>${item.position}</span>
+        </div>
+      `).join("")}
     </div>
   `;
 }

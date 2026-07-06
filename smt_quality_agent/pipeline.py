@@ -27,6 +27,7 @@ from smt_quality_agent.drilldown import build_drilldown_report
 from smt_quality_agent.early_warning import build_early_warning_report
 from smt_quality_agent.over_volume import normalize_spi_rows
 from smt_quality_agent.param_correlation import build_param_analysis, first_inspection_rows
+from smt_quality_agent.process_dimensions import build_process_dimensions
 from smt_quality_agent.rules_engine import build_quality_cases, infer_total_pad_counts, run_agent
 
 
@@ -262,7 +263,11 @@ def run_pipeline(database: str | None = None, window_boards: int | None = None) 
         }
 
     def param_work() -> dict[str, Any]:
-        write_json(OUTPUT_DIR / "param_analysis.json", build_param_analysis(full_rows, source_table))
+        report = build_param_analysis(full_rows, source_table)
+        # Composed here (not inside build_param_analysis) to keep the two
+        # modules free of an import cycle.
+        report["process_dimensions"] = build_process_dimensions(full_rows)
+        write_json(OUTPUT_DIR / "param_analysis.json", report)
         return {"rows": len(full_rows), "files": list(STAGE_FILES["param_analysis"])}
 
     def drilldown_work() -> dict[str, Any]:

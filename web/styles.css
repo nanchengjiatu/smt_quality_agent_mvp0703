@@ -140,6 +140,85 @@ main {
   gap: 12px;
 }
 
+/* ---------- 工艺维度体检（P1） ---------- */
+
+.pd-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.pd-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.pd-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.pd-card p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.pd-verdict {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.pd-card.pd-effect {
+  border-left: 4px solid var(--warning);
+}
+
+.pd-card.pd-effect .pd-verdict {
+  color: var(--warning);
+  border-color: #fedf89;
+}
+
+.pd-card.pd-no_effect {
+  border-left: 4px solid var(--ok);
+}
+
+.pd-card.pd-no_effect .pd-verdict {
+  color: var(--ok);
+  border-color: #a6f4c5;
+}
+
+.pd-card.pd-insufficient,
+.pd-card.pd-not_collected {
+  border-left: 4px solid var(--line);
+  opacity: 0.85;
+}
+
+.pd-profile {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.pd-bar-wrap {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pd-bar {
+  width: 22px;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--warning) 55%, var(--panel));
+  border: 1px solid var(--line);
+  border-bottom: none;
+}
+
 /* ---------- 事前预警（P0） ---------- */
 
 .ew-section {
